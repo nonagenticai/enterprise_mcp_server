@@ -11,6 +11,7 @@ from typing import Dict, List, Optional, Any, Union
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone, timedelta
 from functools import partial
+from urllib.parse import quote_plus
 import secrets
 from asyncpg.exceptions import DuplicateDatabaseError, InvalidCatalogNameError
 
@@ -60,7 +61,7 @@ class MCPPostgresDB:
         """
         loop = asyncio.get_event_loop()
         executor = ThreadPoolExecutor(max_workers=DB_POOL_MAX_SIZE)
-        dsn = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
+        dsn = f"postgresql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
 
         logger.info(
             f"Attempting to connect to PostgreSQL at {DB_HOST}:{DB_PORT}/{DB_NAME}"

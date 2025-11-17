@@ -1,0 +1,113 @@
+services:
+  # Database services
+  postgres:
+    image: postgres:15-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: enterprise_mcp_server
+    ports:
+      - "5434:5432"  # Changed to 5434 on host to avoid conflict with local PostgreSQL
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro  # Mount init scripts
+    # healthcheck:
+    #   test: ["CMD-SHELL", "pg_isready -U postgres -d enterprise_mcp_server || exit 1"]
+    #   interval: 10s
+    #   timeout: 5s
+    #   retries: 10
+    #   start_period: 20s  # Give more time for database initialization
+    networks:
+      - workflow-system-network
+
+  redis:
+    image: redis:7-alpine
+    restart: always
+    ports:
+      - "6378:6378"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - workflow-system-network
+  
+  # Enterprise MCP server (gateway version)
+  mcp:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: enterprise-mcp-server:latest
+    container_name: enterprise-mcp-server
+    env_file:
+      - ../.env  # Centralized network configuration
+      - .env     # Service-specific secrets
+    ports:
+      - "0.0.0.0:8033:8033"
+    volumes:
+      - ./src:/app/src
+      - claude_auth:/root/.claude
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      # Server Configuration
+      - HOST=0.0.0.0
+      - PORT=8033
+      - LOG_LEVEL=INFO
+      - CORS_ALLOWED_ORIGINS=https://app.cursor.sh,https://cursor.sh,http://localhost:*,http://127.0.0.1:*
+      - PYTHONUNBUFFERED=1
+
+      # PostgreSQL Configuration
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=enterprise_mcp_server
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_POOL_MIN_SIZE=2
+      - POSTGRES_POOL_MAX_SIZE=10
+
+      # Redis Configuration
+      - REDIS_URL=redis://redis:6379
+
+      # API Gateway Configuration
+      - ENTERPRISE_MCP_SERVER_URL=http://localhost:8033
+      - GATEWAY_PORT=8000
+      - DEFAULT_RATE_LIMIT=1000
+      - CORS_ORIGINS=http://localhost:*,https://app.cursor.sh,https://cursor.sh
+
+      # JWT Configuration
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY}
+      - JWT_ALGORITHM=HS256
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=120
+
+      # Admin User Configuration
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD}
+      - DEFAULT_ADMIN_PASSWORD_HASH=${DEFAULT_ADMIN_PASSWORD_HASH}
+
+      # External API Keys
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8033/api/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - workflow-system-network
+
+networks:
+  workflow-system-network:
+    external: true
+
+volumes:
+  postgres_data:
+  redis_data:
+  claude_auth:

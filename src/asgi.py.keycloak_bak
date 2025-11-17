@@ -17,7 +17,6 @@ import asyncio
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from .keycloak_auth.middleware import KeycloakAuthMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import secrets
@@ -151,9 +150,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# Add Keycloak authentication middleware
-app.add_middleware(KeycloakAuthMiddleware)
 
 # Authentication models
 class TokenRequest(BaseModel):
