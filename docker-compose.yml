@@ -38,7 +38,6 @@ services:
     image: enterprise-mcp-server:latest
     container_name: enterprise-mcp-server
     env_file:
-    - ../.env
     - .env
     ports:
     - 0.0.0.0:8033:8033
