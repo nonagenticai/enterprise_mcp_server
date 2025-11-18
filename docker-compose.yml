@@ -1,26 +1,26 @@
 services:
-  postgres:
-    image: postgres:15-alpine
-    restart: always
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: enterprise_mcp_server
-    ports:
-    - 5434:5432
-    volumes:
-    - postgres_data:/var/lib/postgresql/data
-    - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
-    networks:
-    - workflow-system-network
+  # postgres:
+  #   image: postgres:15-alpine
+  #   restart: always
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: enterprise_mcp_server
+  #   ports:
+  #   - 5434:5432
+  #   volumes:
+  #   - postgres_data:/var/lib/postgresql/data
+  #   - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
+  #   networks:
+  #   - workflow-system-network
   redis:
     image: redis:7-alpine
     restart: always
     ports:
-    - 6378:6378
+    - 6378:6379
     volumes:
     - redis_data:/data
-    command: redis-server --appendonly yes
+    command: redis-server --port 6379 --appendonly yes
     healthcheck:
       test:
       - CMD
@@ -46,8 +46,8 @@ services:
     - ./src:/app/src
     - claude_auth:/root/.claude
     restart: unless-stopped
-    depends_on:
-    - postgres
+    depends_on: # postgres is now centralized on m1 pgbouncer
+    # - postgres
     - redis
     environment:
     - HOST=0.0.0.0
@@ -77,7 +77,7 @@ services:
     healthcheck:
       test:
       - CMD-SHELL
-      - curl -f http://localhost:8033/api/health || exit 1
+      - curl -f http://localhost:8033/ || exit 1
       interval: 30s
       timeout: 10s
       retries: 3
