@@ -205,7 +205,10 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
-.idea/'
+.idea/
+
+# Ruff linter cache
+.ruff_cache/
 
 .DS_Store
 web/.vscode/settings.json

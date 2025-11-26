@@ -34,7 +34,7 @@ services:
       POSTGRES_SSLMODE: require
       POSTGRES_POOL_MIN_SIZE: 2
       POSTGRES_POOL_MAX_SIZE: 10
-      DATABASE_URL: postgresql://enterprise_mcp_server:${POSTGRES_PASSWORD_ENTERPRISE_MCP}@host.docker.internal:6432/enterprise_mcp_server?sslmode=require&sslcert=/app/certs/enterprise_mcp_server-cert.pem&sslkey=/app/certs/enterprise_mcp_server-key.pem&sslrootcert=/app/certs/ca-cert.pem
+      DATABASE_URL: postgresql://enterprise_mcp_server:${POSTGRES_PASSWORD_ENTERPRISE_MCP}@db:6432/enterprise_mcp_server?sslmode=require&sslcert=/app/certs/enterprise_mcp_server-cert.pem&sslkey=/app/certs/enterprise_mcp_server-key.pem&sslrootcert=/app/certs/ca-cert.pem
 
       # Keycloak Configuration (OAuth2 Standard)
       SERVICE_CLIENT_ID: ${SERVICE_CLIENT_ID}
