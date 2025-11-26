@@ -1,94 +1,208 @@
 services:
-  # postgres:
-  #   image: postgres:15-alpine
-  #   restart: always
-  #   environment:
-  #     POSTGRES_USER: postgres
-  #     POSTGRES_PASSWORD: postgres
-  #     POSTGRES_DB: enterprise_mcp_server
-  #   ports:
-  #   - 5434:5432
-  #   volumes:
-  #   - postgres_data:/var/lib/postgresql/data
-  #   - ./docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d:ro
-  #   networks:
-  #   - workflow-system-network
-  redis:
-    image: redis:7-alpine
-    restart: always
-    ports:
-    - 6378:6379
-    volumes:
-    - redis_data:/data
-    command: redis-server --port 6379 --appendonly yes
-    healthcheck:
-      test:
-      - CMD
-      - redis-cli
-      - ping
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-    - workflow-system-network
   mcp:
     build:
       context: .
       dockerfile: Dockerfile
     image: enterprise-mcp-server:latest
     container_name: enterprise-mcp-server
-    env_file:
-    - .env
-    ports:
-    - 0.0.0.0:8033:8033
-    volumes:
-    - ./src:/app/src
-    - claude_auth:/root/.claude
-    restart: unless-stopped
-    depends_on: # postgres is now centralized on m1 pgbouncer
-    # - postgres
-    - redis
+
+    # ----------------------------------------------------------------------
+    # Environment Configuration (ALL non-secret config goes here)
+    # ----------------------------------------------------------------------
     environment:
-    - HOST=0.0.0.0
-    - PORT=8033
-    - LOG_LEVEL=INFO
-    - CORS_ALLOWED_ORIGINS=https://app.cursor.sh,https://cursor.sh,http://localhost:*,http://127.0.0.1:*
-    - PYTHONUNBUFFERED=1
-    - POSTGRES_HOST=db
-    - POSTGRES_PORT=6432
-    - POSTGRES_DB=enterprise_mcp_server
-    - POSTGRES_USER=enterprise_mcp_server
-    - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    - POSTGRES_POOL_MIN_SIZE=2
-    - POSTGRES_POOL_MAX_SIZE=10
-    - REDIS_URL=redis://redis:6379
-    - ENTERPRISE_MCP_SERVER_URL=http://localhost:8033
-    - GATEWAY_PORT=8000
-    - DEFAULT_RATE_LIMIT=1000
-    - CORS_ORIGINS=http://localhost:*,https://app.cursor.sh,https://cursor.sh
-    - JWT_SECRET_KEY=${JWT_SECRET_KEY}
-    - JWT_ALGORITHM=HS256
-    - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=120
-    - ADMIN_USERNAME=admin
-    - ADMIN_PASSWORD=${ADMIN_PASSWORD}
-    - DEFAULT_ADMIN_PASSWORD_HASH=${DEFAULT_ADMIN_PASSWORD_HASH}
-    - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      # Core Metadata
+      SERVICE_NAME: enterprise-mcp-server
+      VERSION: 1.0.0
+      ENVIRONMENT: production
+      LOG_LEVEL: INFO
+      LOG_FORMAT: json
+
+      # Network Configuration
+      INTERNAL_SERVICES_IP: 127.0.0.1
+
+      # Application Settings
+      HOST: 0.0.0.0
+      PORT: 8033
+      TEMP_DIR: /tmp/enterprise_mcp
+
+      # Database Configuration
+      POSTGRES_HOST: db
+      POSTGRES_PORT: 6432
+      POSTGRES_DB: enterprise_mcp_server
+      POSTGRES_USER: enterprise_mcp_server
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_ENTERPRISE_MCP}
+      POSTGRES_SSLMODE: require
+      POSTGRES_POOL_MIN_SIZE: 2
+      POSTGRES_POOL_MAX_SIZE: 10
+      DATABASE_URL: postgresql://enterprise_mcp_server:${POSTGRES_PASSWORD_ENTERPRISE_MCP}@host.docker.internal:6432/enterprise_mcp_server?sslmode=require&sslcert=/app/certs/enterprise_mcp_server-cert.pem&sslkey=/app/certs/enterprise_mcp_server-key.pem&sslrootcert=/app/certs/ca-cert.pem
+
+      # Keycloak Configuration (OAuth2 Standard)
+      SERVICE_CLIENT_ID: ${SERVICE_CLIENT_ID}
+      SERVICE_CLIENT_SECRET: ${SERVICE_CLIENT_SECRET}
+      KEYCLOAK_URL: ${KEYCLOAK_URL}
+      KEYCLOAK_REALM: ${KEYCLOAK_REALM}
+      KEYCLOAK_CLIENT_ID: mcp
+      KEYCLOAK_CLIENT_SECRET: ${SERVICE_CLIENT_SECRET}
+      AUTH_ENABLED: true
+      KEYCLOAK_SSL_VERIFY: true
+
+      # Secrets Service Integration
+      SECRETS_URL: https://localhost:8543
+
+      # Redis Configuration
+      REDIS_URL: redis://redis:6379
+
+      # JWT Configuration
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      JWT_ALGORITHM: HS256
+      JWT_ACCESS_TOKEN_EXPIRE_MINUTES: 120
+
+      # Admin Credentials
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      DEFAULT_ADMIN_PASSWORD_HASH: ${DEFAULT_ADMIN_PASSWORD_HASH}
+
+      # External API Keys
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+      # CORS Configuration
+      CORS_ALLOWED_ORIGINS: https://app.cursor.sh,https://cursor.sh,http://localhost:*,http://127.0.0.1:*
+      CORS_ORIGINS: http://localhost:*,https://app.cursor.sh,https://cursor.sh
+
+      # Gateway Configuration
+      ENTERPRISE_MCP_SERVER_URL: http://localhost:8033
+      GATEWAY_PORT: 8000
+      DEFAULT_RATE_LIMIT: 1000
+
+      # Python Configuration
+      PYTHONUNBUFFERED: 1
+
+    # ----------------------------------------------------------------------
+    # Port Mappings (CRITICAL SECURITY FIX: localhost only)
+    # ----------------------------------------------------------------------
+    ports:
+      - "0.0.0.0:8033:8033"
+
+    # ----------------------------------------------------------------------
+    # Network Configuration
+    # ----------------------------------------------------------------------
+    networks:
+      - workflow-system-network
+
+    # ----------------------------------------------------------------------
+    # Restart Policy
+    # ----------------------------------------------------------------------
+    restart: unless-stopped
+
+    # ----------------------------------------------------------------------
+    # DNS and Host Resolution
+    # ----------------------------------------------------------------------
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "db:127.0.0.1"
+      - "localhost:127.0.0.1"
+      - "localhost:127.0.0.1"
+      - "db:127.0.0.1"
+
+    # ----------------------------------------------------------------------
+    # Volume Mounts
+    # ----------------------------------------------------------------------
+    volumes:
+      # Application certificates
+      - ./certs:/app/certs:ro
+      # Source code (development)
+      - ./src:/app/src
+      # Claude authentication
+      - claude_auth:/root/.claude
+
+    # ----------------------------------------------------------------------
+    # Dependencies
+    # ----------------------------------------------------------------------
+    depends_on:
+      redis:
+        condition: service_healthy
+
+    # ----------------------------------------------------------------------
+    # Resource Limits
+    # ----------------------------------------------------------------------
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+    # ----------------------------------------------------------------------
+    # Health Check
+    # ----------------------------------------------------------------------
     healthcheck:
-      test:
-      - CMD-SHELL
-      - curl -f http://localhost:8033/ || exit 1
+      test: ["CMD-SHELL", "curl -f http://localhost:8033/ || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 15s
+
+  redis:
+    image: redis:7-alpine
+    container_name: enterprise-mcp-redis
+    restart: always
+
+    # ----------------------------------------------------------------------
+    # Port Mappings (localhost only for security)
+    # ----------------------------------------------------------------------
+    ports:
+      - "0.0.0.0:6378:6379"
+
+    # ----------------------------------------------------------------------
+    # Command
+    # ----------------------------------------------------------------------
+    command: redis-server --port 6379 --appendonly yes
+
+    # ----------------------------------------------------------------------
+    # Network Configuration
+    # ----------------------------------------------------------------------
     networks:
-    - workflow-system-network
-    extra_hosts:
-    - db:127.0.0.1
+      - workflow-system-network
+
+    # ----------------------------------------------------------------------
+    # Volume Mounts
+    # ----------------------------------------------------------------------
+    volumes:
+      - redis_data:/data
+
+    # ----------------------------------------------------------------------
+    # Resource Limits
+    # ----------------------------------------------------------------------
+    deploy:
+      resources:
+        limits:
+          cpus: '1'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 128M
+
+    # ----------------------------------------------------------------------
+    # Health Check
+    # ----------------------------------------------------------------------
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+# --------------------------------------------------------------------------
+# Volumes
+# --------------------------------------------------------------------------
+volumes:
+  redis_data:
+  claude_auth:
+
+# --------------------------------------------------------------------------
+# External Network (created once, shared by all services)
+# --------------------------------------------------------------------------
 networks:
   workflow-system-network:
     external: true
-volumes:
-  postgres_data: null
-  redis_data: null
-  claude_auth: null

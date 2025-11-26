@@ -6,19 +6,11 @@ LABEL maintainer="George Dekker"
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    POETRY_VERSION=1.8.3 \
-    POETRY_HOME="/opt/poetry" \
-    POETRY_VIRTUALENVS_CREATE=false \
-    POETRY_CACHE_DIR=/var/cache/pypoetry \
-    POETRY_NO_INTERACTION=1
-
-# Add Poetry to PATH
-ENV PATH="$POETRY_HOME/bin:$PATH"
+    PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Install system dependencies including Node.js, Poetry and clean up
+# Install system dependencies including Node.js, uv and clean up
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     build-essential \
@@ -30,7 +22,7 @@ RUN apt-get update && \
     && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_20.x nodistro main" | tee /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
     && apt-get install -y nodejs \
-    && curl -sSL https://install.python-poetry.org | python3 - --version $POETRY_VERSION \
+    && pip install --no-cache-dir uv \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -40,14 +32,13 @@ RUN npm install -g @anthropic-ai/claude-code
 # Create directory for Claude configuration
 RUN mkdir -p /root/.claude
 
-# Copy Poetry configuration files
-COPY pyproject.toml poetry.lock* ./
+# Copy dependency files
+COPY pyproject.toml ./
+COPY uv.lock* ./
+COPY README.md ./
 
-# Install Python dependencies using Poetry
-RUN poetry config virtualenvs.create false && \
-    poetry lock && \
-    poetry install --no-interaction --no-ansi && \
-    poetry cache clear --all .
+# Install Python dependencies using uv
+RUN uv sync --frozen
 
 # Copy the application code
 COPY . /app/
@@ -64,5 +55,5 @@ ENV POSTGRES_DB=enterprise_mcp_server
 ENV POSTGRES_USER=postgres
 ENV POSTGRES_PASSWORD=postgres
 
-# Run the Enterprise MCP ASGI application using Uvicorn
-CMD ["uvicorn", "src.asgi:app", "--host", "0.0.0.0", "--port", "8033"]
+# Run the Enterprise MCP ASGI application using uv run
+CMD ["uv", "run", "uvicorn", "src.asgi:app", "--host", "0.0.0.0", "--port", "8033"]
