@@ -16,7 +16,7 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: enterprise_mcp_server
     ports:
-      - "5440:5432"  # choose free host port to avoid collisions
+      - "5449:5432"  # choose free host port to avoid collisions
     volumes:
       - enterprise_mcp_db_data:/var/lib/postgresql/data
     networks:

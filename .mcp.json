@@ -2,7 +2,7 @@
   "mcpServers": {
     "enterprise-mcp": {
       "type": "http",
-      "url": "http://localhost:8033/mcp"
+      "url": "http://localhost:8030/mcp"
     }
   }
 }

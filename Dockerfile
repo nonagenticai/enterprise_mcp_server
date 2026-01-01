@@ -44,10 +44,10 @@ RUN uv sync --frozen
 COPY . /app/
 
 # Expose the port that the app runs on
-EXPOSE 8033
+EXPOSE 8030
 
 # Set environment variables for database connection
-ENV PORT=8033
+ENV PORT=8030
 ENV HOST=0.0.0.0
 ENV POSTGRES_HOST=postgres
 ENV POSTGRES_PORT=5432
@@ -56,4 +56,4 @@ ENV POSTGRES_USER=postgres
 ENV POSTGRES_PASSWORD=postgres
 
 # Run the Enterprise MCP ASGI application using uv run
-CMD ["uv", "run", "uvicorn", "src.asgi:app", "--host", "0.0.0.0", "--port", "8033"]
+CMD ["uv", "run", "uvicorn", "src.asgi:app", "--host", "0.0.0.0", "--port", "8030"]

@@ -32,7 +32,7 @@ logger = logging.getLogger("api_gateway")
 
 # Configuration from environment variables with defaults
 ENTERPRISE_MCP_SERVER_URL = os.getenv(
-    "ENTERPRISE_MCP_SERVER_URL", "http://localhost:8033"
+    "ENTERPRISE_MCP_SERVER_URL", "http://localhost:8030"
 )
 GATEWAY_PORT = int(os.getenv("GATEWAY_PORT", "8000"))
 GATEWAY_HOST = os.getenv("GATEWAY_HOST", "0.0.0.0")

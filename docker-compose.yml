@@ -25,7 +25,7 @@ services:
 
       # Application Settings
       HOST: 0.0.0.0
-      PORT: 8033
+      PORT: 8030
       TEMP_DIR: /tmp/enterprise_mcp
 
       # Database Configuration
@@ -73,7 +73,7 @@ services:
       CORS_ORIGINS: http://localhost:*,https://app.cursor.sh,https://cursor.sh
 
       # Gateway Configuration
-      ENTERPRISE_MCP_SERVER_URL: http://localhost:8033
+      ENTERPRISE_MCP_SERVER_URL: http://localhost:8030
       GATEWAY_PORT: 8000
       DEFAULT_RATE_LIMIT: 1000
 
@@ -84,7 +84,7 @@ services:
     # Port Mappings (CRITICAL SECURITY FIX: localhost only)
     # ----------------------------------------------------------------------
     ports:
-      - "0.0.0.0:8033:8033"
+      - "0.0.0.0:8030:8030"
 
     # ----------------------------------------------------------------------
     # Network Configuration
@@ -141,7 +141,7 @@ services:
     # Health Check
     # ----------------------------------------------------------------------
     healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:8033/api/health || exit 1"]
+      test: ["CMD-SHELL", "curl -f http://localhost:8030/api/health || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3

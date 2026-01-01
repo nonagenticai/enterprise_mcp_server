@@ -36,7 +36,7 @@ def main():
 
     # Determine transport settings
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", 8033))
+    port = int(os.getenv("PORT", 8030))
     log_level = os.getenv("LOG_LEVEL", "info").lower()
     transport_type = os.getenv("MCP_TRANSPORT", "http").lower()
 

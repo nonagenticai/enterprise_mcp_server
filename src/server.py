@@ -77,7 +77,7 @@ load_dotenv()
 # Constants
 MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "Enterprise MCP Gateway Server")
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", 8033))
+PORT = int(os.getenv("PORT", 8030))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # --- Single FastMCP Instance ---

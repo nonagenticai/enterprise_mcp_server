@@ -351,7 +351,7 @@ if __name__ == "__main__":
     import uvicorn
 
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", 8033))
+    port = int(os.getenv("PORT", 8030))
 
     # Run the FastAPI app with Uvicorn
     uvicorn.run("src.asgi:app", host=host, port=port, log_level="info", reload=True)

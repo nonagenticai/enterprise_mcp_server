@@ -44,7 +44,7 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 HOST = os.getenv("API_HOST", "0.0.0.0")
-PORT = int(os.getenv("API_PORT", 8033))
+PORT = int(os.getenv("API_PORT", 8030))
 CORS_ALLOWED_ORIGINS_STR = os.getenv(
     "CORS_ALLOWED_ORIGINS",
     "https://app.cursor.sh,https://cursor.sh,http://localhost:*,http://127.0.0.1:*",

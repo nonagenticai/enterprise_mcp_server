@@ -56,13 +56,13 @@ The server provides built-in tools for managing Claude authentication:
 #### Check Authentication Status
 ```bash
 # Call the claude_auth_status tool to check current status
-curl -X POST http://localhost:8033/tools/claude_auth/claude_auth_status
+curl -X POST http://localhost:8030/tools/claude_auth/claude_auth_status
 ```
 
 #### Perform Authentication
 ```bash
 # Use the claude_auth_login tool for interactive authentication
-curl -X POST http://localhost:8033/tools/claude_auth/claude_auth_login \
+curl -X POST http://localhost:8030/tools/claude_auth/claude_auth_login \
   -H "Content-Type: application/json" \
   -d '{"browser_auth": true}'
 ```
@@ -70,7 +70,7 @@ curl -X POST http://localhost:8033/tools/claude_auth/claude_auth_login \
 #### Test Authentication
 ```bash
 # Test if authentication is working
-curl -X POST http://localhost:8033/tools/claude_auth/claude_auth_test
+curl -X POST http://localhost:8030/tools/claude_auth/claude_auth_test
 ```
 
 ### Method 2: Manual Authentication
