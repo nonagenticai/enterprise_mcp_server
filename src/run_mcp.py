@@ -36,9 +36,9 @@ def main():
 
     # Determine transport settings
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", 8029))
+    port = int(os.getenv("PORT", 8033))
     log_level = os.getenv("LOG_LEVEL", "info").lower()
-    transport_type = os.getenv("MCP_TRANSPORT", "sse").lower()
+    transport_type = os.getenv("MCP_TRANSPORT", "http").lower()
 
     print(f"Starting FastMCP server with transport type: {transport_type}")
 
@@ -57,11 +57,11 @@ def main():
         logger.error(f"Error during gateway initialization: {e}", exc_info=True)
         logger.warning("Continuing with server startup despite initialization error")
 
-    if transport_type == "sse":
-        # Run with SSE transport for web clients
-        print(f"Running with SSE transport on {host}:{port}")
+    if transport_type == "http":
+        # Run with Streamable HTTP transport
+        print(f"Running with Streamable HTTP transport on {host}:{port}")
         mcp.run(
-            transport="sse",
+            transport="streamable-http",
             host=host,
             port=port,
             log_level=log_level,
@@ -72,7 +72,7 @@ def main():
         mcp.run(transport="stdio")
     else:
         print(f"Error: Unsupported MCP_TRANSPORT: {transport_type}")
-        print("Supported types: 'sse', 'stdio'")
+        print("Supported types: 'http', 'stdio'")
         sys.exit(1)
 
 

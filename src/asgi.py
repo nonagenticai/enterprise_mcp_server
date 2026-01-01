@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ASGI adapter for using the Enterprise MCP server with Uvicorn.
-This creates a FastAPI app that integrates the Enterprise MCP SSE functionality.
+This creates a FastAPI app that integrates the Enterprise MCP Streamable HTTP functionality.
 """
 import sys
 import os
@@ -97,8 +97,8 @@ from .dependencies import get_db, get_auth_service, get_audit_service, get_tool_
 # Create a FastAPI app - Apply lifespan manager here
 app = FastAPI(
     title="Enterprise MCP Server",
-    description="Enterprise MCP Server with ASGI adapter for Uvicorn",
-    version="1.2.0",  # Updated for latest package versions and deprecation fixes
+    description="Enterprise MCP Server with Streamable HTTP transport",
+    version="1.3.0",  # Updated for Streamable HTTP transport migration
     lifespan=lifespan_manager,  # Use the lifespan manager from server_fastmcp
 )
 
@@ -202,23 +202,22 @@ async def get_token(request: TokenRequest):
 @app.get("/")
 async def root_info():
     """
-    Get basic information about the FastMCP server endpoints.
+    Get basic information about the Enterprise MCP server endpoints.
     """
     return {
-        "name": "Enterprise MCP Server ASGI Adapter",
-        "description": "FastAPI adapter for Enterprise MCP",
+        "name": "Enterprise MCP Server",
+        "description": "Enterprise MCP Server with Streamable HTTP transport",
         "status": "running",
         "endpoints": {
+            "mcp": "/mcp",
             "info": "/api/info",
             "health": "/api/health",
             "mcp_health": "/api/mcp-health",
-            "sse_connection": "/sse",
-            "sse_messages": "/messages/",
             "docs": "/docs",
             "openapi_schema": "/openapi.json",
             "token": "/token",
         },
-        "usage": "To connect to the SSE endpoint, use '/sse'. For posting messages to SSE sessions, use '/messages/{session_id}'.",
+        "usage": "Connect to the MCP endpoint at '/mcp' using Streamable HTTP transport.",
     }
 
 
@@ -235,7 +234,7 @@ async def root():
 @app.get("/api/health")
 async def health_check() -> Dict[str, str]:
     """Basic health check endpoint."""
-    return {"status": "healthy", "version": "1.2.0"}
+    return {"status": "healthy", "version": "1.3.0"}
 
 
 @app.get("/api/mcp-health")
@@ -319,17 +318,17 @@ async def list_available_tools() -> Dict[str, Any]:
         raise HTTPException(status_code=500, detail="Failed to list available tools")
 
 
-# --- Mount FastMCP SSE App ---
+# --- Mount FastMCP HTTP App ---
 # Get the Starlette app from FastMCP using the http_utils module
-from .http_utils import create_sse_app
+from .http_utils import create_mcp_http_app
 
-sse_app = create_sse_app(global_mcp_instance)
+mcp_http_app = create_mcp_http_app(global_mcp_instance)
 
-# Mount the Enterprise MCP SSE app at the root.
-# FastAPI routes defined above will take precedence for their specific paths.
-# The mounted app will handle remaining paths like /sse and /messages/.
-app.mount("/", sse_app)
-logger.info("Mounted Enterprise MCP SSE app at root path to handle /sse and /messages/")
+# Mount the Enterprise MCP HTTP app at /mcp for Streamable HTTP transport.
+# FastAPI routes defined above handle their specific paths.
+# The mounted app handles the /mcp endpoint for MCP protocol communication.
+app.mount("/mcp", mcp_http_app)
+logger.info("Mounted Enterprise MCP HTTP app at /mcp endpoint for Streamable HTTP transport")
 
 # --- Startup logic is handled by lifespan_manager in server.py ---
 # The deprecated @app.on_event("startup") has been removed in favor of

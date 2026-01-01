@@ -1,0 +1,26 @@
+services:
+  mcp:
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/enterprise_mcp_server
+    depends_on:
+      - db
+    networks:
+      - default
+
+  db:
+    image: postgres:18-alpine
+    container_name: enterprise-mcp-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: enterprise_mcp_server
+    ports:
+      - "5440:5432"  # choose free host port to avoid collisions
+    volumes:
+      - enterprise_mcp_db_data:/var/lib/postgresql/data
+    networks:
+      - default
+
+volumes:
+  enterprise_mcp_db_data:
