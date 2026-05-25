@@ -5,9 +5,8 @@ RestrictedPython>=8.0,<9.0.0
 # Claude Code SDK
 claude-code-sdk>=0.0.10,<0.1.0
 
-# Database - Updated to latest available
-psycopg2-binary>=2.9.10
-asyncpg>=0.30.0,<0.31.0
+# Database - psycopg v3 (async) with connection pool
+psycopg[binary,pool]>=3.3.4
 
 # HTTP and Async - Updated to latest
 httpx>=0.28.1,<0.29.0
