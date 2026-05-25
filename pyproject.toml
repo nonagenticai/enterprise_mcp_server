@@ -9,6 +9,7 @@ packages = ["src"]
 name = "enterprise_mcp_server"
 version = "1.3.0"
 description = "Enterprise MCP Server with Streamable HTTP transport"
+license = "Apache-2.0"
 authors = [
     { name = "georgiedekker", email = "georgiedekker@gmail.com" }
 ]
