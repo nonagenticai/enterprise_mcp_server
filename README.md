@@ -1,5 +1,7 @@
 # MCP API Gateway and Services Ecosystem
 
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
 A comprehensive Model Context Protocol (MCP) solution featuring an API Gateway for routing and management, an Enterprise MCP Server for core services like authentication and tool administration, and a dedicated Tool Server for operational tool execution. Built with FastAPI and FastMCP.
 
 ## Overview
@@ -221,8 +223,11 @@ See [docs/database_schema.sql](docs/database_schema.sql) for the detailed table 
 
 ## Contributing
 
-(Add contribution guidelines if applicable)
+Contributions are welcome — see [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, tests,
+and the PR workflow. By participating you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
+Found a security issue? Please follow the process in [`SECURITY.md`](SECURITY.md) — do not
+open a public issue.
 
 ## License
 
-(Specify project license if applicable)
+Apache 2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
