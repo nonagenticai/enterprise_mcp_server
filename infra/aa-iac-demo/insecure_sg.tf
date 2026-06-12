@@ -8,7 +8,7 @@ resource "aws_security_group" "aa_iac_demo_open_ssh" {
   vpc_id      = "vpc-aa-iac-demo"
 
   ingress {
-    description = "SSH from private network"
+    description = "SSH from internal network"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
