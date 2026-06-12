@@ -8,11 +8,11 @@ resource "aws_security_group" "aa_iac_demo_open_ssh" {
   vpc_id      = "vpc-aa-iac-demo"
 
   ingress {
-    description = "SSH from anywhere (INSECURE)"
+    description = "SSH from private network (RESTRICTED)"
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["10.0.0.0/8"]
   }
 
   egress {
