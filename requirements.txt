@@ -18,8 +18,8 @@ fastapi[all]>=0.115.12,<0.116.0
 sse-starlette>=2.3.4,<3.0.0
 
 # Authentication - Updated to latest
-python-jose>=3.3.0
-python-multipart>=0.0.20
+python-jose==3.3.0  # AA E3.18 dep-CVE demo: CVE-2024-33663 (HIGH) algorithm confusion
+python-multipart==0.0.5  # AA E3.18 dep-CVE demo: CVE-2024-24762 (HIGH) ReDoS
 pyjwt>=2.10.0,<3.0.0
 passlib[bcrypt]>=1.7.4,<2.0.0
 
