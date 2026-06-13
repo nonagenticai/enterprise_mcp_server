@@ -8,6 +8,6 @@ parameterized query and the scanContainerSecurity delta gate proves the drop.
 
 
 def get_user_by_id(cursor, user_id):
-    # INSECURE: SQL string built via %-formatting -> SQL injection (CWE-89)
-    cursor.execute("SELECT * FROM users WHERE id = %s" % user_id)
+    # SECURE: Using parameterized query to prevent SQL injection (CWE-89)
+    cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
     return cursor.fetchone()
