@@ -42,4 +42,4 @@ prometheus-client>=0.21.0
 # Additional dependencies - Pin under 2.0 as per FastMCP v2.x
 mcp>=1.8.0,<2.0.0
 uvicorn[standard]>=0.34.2,<0.35.0
-redis>=6.0.0,<7.0.0
+redis==8.0.1
