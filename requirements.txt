@@ -1,5 +1,5 @@
 # Core FastMCP - Updated to latest
-fastmcp==3.4.2
+fastmcp==3.4.7
 RestrictedPython>=8.0,<9.0.0
 
 # Claude Code SDK
