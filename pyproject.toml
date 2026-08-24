@@ -41,3 +41,12 @@ dependencies = [
     "websockets==16.0",
     "uuid-v7>=1.0.0,<2.0.0",
 ]
+
+[tool.pytest.ini_options]
+# Pinned explicitly rather than relying on rootdir discovery: the automated
+# dependency-upgrade pipeline runs `/workspace/.venv/bin/python -m pytest -q` from the
+# repository root inside a container, and a silent collection miss there is indistinguishable
+# from a passing suite (pytest exits 5, "no tests ran", which the pipeline tolerates by design
+# so that repos without a suite do not false-block).
+testpaths = ["tests"]
+addopts = "-q"
