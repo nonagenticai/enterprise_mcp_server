@@ -20,4 +20,4 @@ def compute_total(a: int, b: int) -> int:
     `development_bug_fix` chain is expected to turn this into ``a + b`` and open
     a pull request. Do not "fix" it by hand — that is the thing under test.
     """
-    return a - b
+    return a + b
