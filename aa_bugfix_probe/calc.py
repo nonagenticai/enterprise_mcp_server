@@ -16,8 +16,8 @@ def compute_total(a: int, b: int) -> int:
     """Return the sum of ``a`` and ``b``.
 
     THE SEEDED DEFECT: this subtracts. `aa_bugfix_probe/check.py` asserts
-    ``compute_total(2, 3) == 5`` and therefore fails. The AA
-    `development_bug_fix` chain is expected to turn this into ``a + b`` and open
-    a pull request. Do not "fix" it by hand — that is the thing under test.
+    ``compute_total(2, 3) == 5`` and therefore fails. The autonomous
+    `development_bug_fix` chain is expected to turn this into ``a + b`` here and
+    open a pull request — making that change is the intended task.
     """
     return a - b

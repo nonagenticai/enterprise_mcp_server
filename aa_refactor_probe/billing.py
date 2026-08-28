@@ -2,7 +2,7 @@
 
 Note the duplicated tax constants: `billing` re-declares what `orders` already
 owns, which is why the cycle exists at all. Extracting them is the obvious
-refactor. Do not do it by hand.
+refactor and is the intended task for the autonomous refactoring chain.
 """
 
 import aa_refactor_probe.orders as orders

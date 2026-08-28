@@ -10,7 +10,11 @@ runs only `uv sync` plus an import check, so nothing here is collected or linted
 `calc.compute_total(a, b)` returns `a - b`. `check.py` asserts
 `compute_total(2, 3) == 5` and therefore exits 1.
 
-**Do not fix this by hand.** Turning the `-` into a `+` is the thing under test.
+**Turning the `-` into a `+` here is the work item**, and the autonomous
+`development_bug_fix` chain is expected to do it.
+
+*Human maintainers:* please do not pre-empt it by committing the fix yourself —
+re-running the harness needs the red back.
 
 ## Why stdlib only, and no pytest
 

@@ -19,7 +19,11 @@ linted or shipped.
 Each check is independent, so one chain going green never turns another's red
 into a false pass.
 
-**Do not close these gaps by hand.** They are the thing under test.
+**These gaps are the work item, and the autonomous development chain is expected to close them.**
+If you are that chain: implementing the missing behaviour here is exactly the intended task.
+
+*Human maintainers:* please do not pre-empt it by committing the implementation yourself —
+re-running the harness needs the gap back.
 
 `check_update.py` additionally pins the CURRENT output byte-for-byte when
 `currency` is omitted, so an update that breaks existing callers fails even
