@@ -3,7 +3,8 @@
 Stdlib only, on purpose. The AA workspace pod (`codegraph-runtime`) clones the
 repo into an emptyDir and then sleeps — nothing installs dependencies at
 provision time, and `/install-dependencies` is docker-only and dead on the k8s
-path. So a `bug_test_command` that reaches for `/workspace/.venv/bin/python` or
+path. So a `bug_test_command` that reaches for `/workspace/.venv/bin/python`
+or
 for pytest exits 127 before it ever asserts anything, and the run reports a
 harness failure dressed as a red test.
 
