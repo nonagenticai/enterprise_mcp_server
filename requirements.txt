@@ -15,7 +15,7 @@ aiohttp==3.14.1
 starlette==1.3.1
 websockets>=13.0.0,<14.0.0
 fastapi[all]>=0.115.12,<0.116.0
-sse-starlette>=2.3.4,<3.0.0
+sse-starlette==3.4.4
 
 # Authentication - Updated to latest
 python-jose>=3.3.0
