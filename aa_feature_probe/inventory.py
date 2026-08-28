@@ -17,6 +17,21 @@ def stock_level(sku: str) -> int:
     return _STOCK.get(sku, 0)
 
 
+def reserve_stock(sku: str, qty: int) -> bool:
+    """Reserve ``qty`` units of ``sku``.
+
+    Returns True and decrements stock when qty is available; returns False and
+    leaves stock untouched when it is not; raises ValueError on a negative qty.
+    """
+    if qty < 0:
+        raise ValueError("qty must be non-negative")
+    current = _STOCK.get(sku, 0)
+    if current >= qty:
+        _STOCK[sku] = current - qty
+        return True
+    return False
+
+
 # THE WORK ITEM: `reserve_stock(sku, qty)` is specified in
 # aa_feature_probe/check_new.py and is deliberately absent here. The autonomous
 # `development_feature_new` chain is expected to ADD IT here and open a pull
