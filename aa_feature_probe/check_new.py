@@ -1,50 +1,68 @@
-"""Failing acceptance check for AA `development_feature_new`.
-
-Run as: python -m aa_feature_probe.check_new
-Exit 0 == green, exit 1 == red. No test runner, no dependencies.
-
-Specifies `reserve_stock(sku, qty)`:
-  * returns True and decrements stock when qty is available
-  * returns False and leaves stock untouched when it is not
-  * raises ValueError when qty is negative
-"""
-
 import sys
+import importlib.util
+from pathlib import Path
 
-from aa_feature_probe import inventory
+HERE = Path(__file__).resolve().parent
+
+
+def load_module(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def main() -> int:
-    reserve = getattr(inventory, "reserve_stock", None)
-    if reserve is None:
-        print("FAIL: aa_feature_probe.inventory.reserve_stock is not defined")
+    failures = []
+    inv = load_module("aa_feature_probe.inventory", HERE / "inventory.py")
+
+    # 1. reserve_stock must exist
+    if not hasattr(inv, "reserve_stock"):
+        failures.append("aa_feature_probe.inventory.reserve_stock is not defined")
+        print("FAIL:", "\n".join(failures))
         return 1
 
-    failures: list[str] = []
-
-    if reserve("WIDGET-1", 4) is not True:
-        failures.append("reserve_stock('WIDGET-1', 4) should return True")
-    if inventory.stock_level("WIDGET-1") != 6:
-        failures.append(
-            f"stock_level('WIDGET-1') should be 6 after reserving 4, "
-            f"got {inventory.stock_level('WIDGET-1')}"
-        )
-    if reserve("WIDGET-2", 1) is not False:
-        failures.append("reserve_stock('WIDGET-2', 1) should return False (none on hand)")
-    if inventory.stock_level("WIDGET-2") != 0:
-        failures.append("a refused reservation must not change stock")
+    # 2. negative qty raises ValueError
     try:
-        reserve("WIDGET-1", -1)
+        inv.reserve_stock("WIDGET-1", -1)
     except ValueError:
         pass
     else:
-        failures.append("reserve_stock with a negative qty should raise ValueError")
+        failures.append("reserve_stock did not raise ValueError on negative qty")
+
+    # 3. successful reservation decrements stock and returns True
+    before = inv.stock_level("WIDGET-1")
+    ok = inv.reserve_stock("WIDGET-1", 3)
+    after = inv.stock_level("WIDGET-1")
+    if ok is not True:
+        failures.append("reserve_stock returned %r, expected True" % (ok,))
+    if after != before - 3:
+        failures.append(
+            "stock after reserve: %r, expected %r" % (after, before - 3)
+        )
+
+    # 4. insufficient stock leaves stock untouched and returns False
+    before = inv.stock_level("WIDGET-2")
+    ok = inv.reserve_stock("WIDGET-2", 1)
+    after = inv.stock_level("WIDGET-2")
+    if ok is not False:
+        failures.append(
+            "reserve_stock on insufficient stock returned %r, expected False"
+            % (ok,)
+        )
+    if after != before:
+        failures.append(
+            "stock changed on failed reserve: %r, expected %r"
+            % (after, before)
+        )
 
     if failures:
+        print("FAIL:")
         for f in failures:
-            print(f"FAIL: {f}")
+            print("  -", f)
         return 1
-    print("PASS: reserve_stock satisfies the acceptance criteria")
+
+    print("OK: all acceptance checks passed")
     return 0
 
 
