@@ -10,9 +10,12 @@ chain is expected to make that change in this file.
 def format_receipt(items: list[tuple[str, int]]) -> str:
     """Render ``items`` as ``NAME  AMOUNT`` lines plus a TOTAL line.
 
-    THE WORK ITEM: there is no ``currency`` parameter. aa_feature_probe/check_update.py
-    specifies one that prefixes every amount and defaults to no prefix so existing
-    callers are unaffected. Adding it here is the intended task.
+    THE WORK ITEM: this signature takes ONLY ``items``. The autonomous
+    `development_feature_update` chain is expected to extend it here. The exact
+    required behaviour is asserted in aa_feature_probe/check_update.py -- read
+    that file for the specification; it is not restated here, because a
+    description of the finished behaviour sitting next to the unfinished code
+    reads as evidence that the work is already done.
     """
     lines = [f"{name}  {amount}" for name, amount in items]
     lines.append(f"TOTAL  {sum(a for _, a in items)}")
