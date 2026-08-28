@@ -54,5 +54,7 @@ those steps have a genuine cycle to find rather than an empty graph.
 ## Expected outcome
 
 A PR that removes the `orders <-> billing` edge in one direction while
-`python -m aa_refactor_probe.check` still exits 0. **Do not break the cycle by
-hand** — re-running needs it back.
+`python -m aa_refactor_probe.check` still exits 0.
+
+*Human maintainers:* do not pre-empt the chain by breaking the cycle yourself —
+re-running needs it back.

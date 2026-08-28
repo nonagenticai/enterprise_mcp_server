@@ -8,7 +8,8 @@ module that both depend on.
 
 The cycle is importable on purpose (each side touches the other only at call
 time), because a probe that cannot be imported measures the harness rather than
-the refactor. Do not break the cycle by hand.
+the refactor. Breaking the cycle is the intended task for the autonomous
+refactoring chain.
 """
 
 import aa_refactor_probe.billing as billing
