@@ -10,12 +10,12 @@ this file pins the behaviour that a cycle-breaking refactor must preserve.
 
 import sys
 
-from aa_refactor_probe import billing, orders
 
 LINES = [("widget", 100.0), ("gasket", 50.0)]
 
 
 def main() -> int:
+    from aa_refactor_probe import billing, orders
     failures: list[str] = []
 
     if orders.order_total(LINES) != 181.5:
