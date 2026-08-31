@@ -1,4 +1,4 @@
-from ..aacyc_alpha.core import a as _a  # cycle: gamma.core -> alpha.core closes the loop
+import src.aacyc_alpha.core as _alpha  # cycle: gamma -> alpha closes the loop
 
 
 def c():
@@ -6,4 +6,4 @@ def c():
 
 
 def chain():
-    return _a()
+    return _alpha.a()

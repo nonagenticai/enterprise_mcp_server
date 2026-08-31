@@ -1,4 +1,4 @@
-from ..aacyc_gamma.core import c as _c
+import src.aacyc_gamma.core as _gamma
 
 
 def b():
@@ -6,4 +6,4 @@ def b():
 
 
 def chain():
-    return _c()
+    return _gamma.c()
