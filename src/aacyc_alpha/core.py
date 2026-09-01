@@ -6,7 +6,6 @@ form binds the MODULE OBJECT lazily, so the package still imports and behaviour 
 A `from x.y import name` form raises ImportError on a partially initialized module and leaves
 no behaviour to preserve -- that is not a refactoring fixture, it is a broken one.
 """
-import src.aacyc_beta.core as _beta
 
 
 def a():
@@ -14,4 +13,5 @@ def a():
 
 
 def chain():
+    import src.aacyc_beta.core as _beta
     return _beta.b()
