@@ -9,7 +9,6 @@ CROSS-DIRECTORY IS NON-NEGOTIABLE. component_extractor aggregates by DIRECTORY a
 intra-component edges before Tarjan runs, so a same-directory cycle is INVISIBLE to the
 analyzer (it returns `cycles: []` -- a vacuous PASS). Three directories, three components.
 """
-import src.aacyc2_beta.core as _beta
 
 
 def a():
@@ -17,4 +16,5 @@ def a():
 
 
 def chain():
+    import src.aacyc2_beta.core as _beta
     return _beta.b()
