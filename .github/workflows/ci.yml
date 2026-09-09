@@ -15,3 +15,29 @@ jobs:
         run: uv sync --no-install-project --frozen || uv sync --no-install-project
       - name: Import smoke (bumped dependency)
         run: uv run --no-sync python -c "import fastmcp; print('fastmcp', getattr(fastmcp, '__version__', '?'))"
+
+  # WHY THIS JOB EXISTS. Until now `CI` had exactly one job, `smoke`, which ran
+  # `uv sync --no-install-project` and `python -c "import fastmcp"`. That cannot fail for a
+  # defect in this repository's own code: it never installs the project and never executes a
+  # single assertion. Reverting any real fix left CI green. Meanwhile `tests/test_http_utils.py`
+  # (added in #89, precisely because "a repo with no tests cannot verify a dependency upgrade")
+  # has never been run by CI at all.
+  #
+  # This job runs that suite, and only that suite. It deliberately does NOT invoke
+  # `aa_bugfix_probe` or any other `aa_*_probe`: those are harness fixtures carrying a seeded
+  # defect that is meant to stay red on `main` (see aa_bugfix_probe/README.md). Running them
+  # here would turn `main` permanently red and would pressure a merge the harness forbids.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.12"
+      # `--no-install-project` is deliberately absent: the suite imports `src.http_utils`.
+      - name: Install dependencies (with project)
+        run: uv sync --frozen || uv sync
+      # `python -m pytest`, not bare `pytest`, so the repo root is on sys.path either way.
+      # `-p no:cacheprovider` keeps a stale .pytest_cache out of a fresh runner's tree.
+      - name: Run test suite
+        run: uv run --no-sync python -m pytest -p no:cacheprovider
