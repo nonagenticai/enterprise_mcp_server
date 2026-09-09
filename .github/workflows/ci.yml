@@ -35,8 +35,19 @@ jobs:
         with:
           python-version: "3.12"
       # `--no-install-project` is deliberately absent: the suite imports `src.http_utils`.
-      - name: Install dependencies (with project)
-        run: uv sync --frozen || uv sync
+      #
+      # `--locked`, NOT `--frozen`, and no `|| uv sync` fallback. Measured on this branch:
+      # set `sse-starlette==3.4.99` (a version that does not exist) in pyproject.toml without
+      # regenerating uv.lock and `uv sync --frozen` exits 0 and installs 3.4.8 -- the OLD pin.
+      # The suite then passes while a dependency-upgrade PR claims the bump was verified, which
+      # is the same vacuity this job exists to remove, merely relocated from the assertion step
+      # to the install step. `uv sync --locked` exits 1 on that mismatch. Verified green with
+      # `--locked` on main and on all three open bot branches before this was changed.
+      #
+      # `smoke` above keeps `--frozen || uv sync` deliberately: it resolves the graph WITHOUT the
+      # project and is allowed to tolerate drift, because it asserts nothing either way.
+      - name: Install dependencies (with project, lockfile enforced)
+        run: uv sync --locked
       # `python -m pytest`, not bare `pytest`, so the repo root is on sys.path either way.
       # `-p no:cacheprovider` keeps a stale .pytest_cache out of a fresh runner's tree.
       - name: Run test suite
