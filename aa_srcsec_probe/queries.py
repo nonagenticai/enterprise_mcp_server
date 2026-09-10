@@ -12,5 +12,5 @@ Run it with:  python -m aa_srcsec_probe.check_srcsec
 
 def get_user_by_id(cursor, user_id):
     """Return the users row whose id is `user_id`, or None if there is none."""
-    cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+    cursor.execute("SELECT * FROM users WHERE id = %s" % user_id)
     return cursor.fetchone()
