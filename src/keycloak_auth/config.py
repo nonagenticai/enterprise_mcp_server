@@ -9,8 +9,8 @@ from pydantic_settings import BaseSettings
 class KeycloakSettings(BaseSettings):
     """Keycloak configuration settings."""
 
-    keycloak_url: str = os.getenv("KEYCLOAK_URL", "https://keycloak.internal")
-    realm_name: str = os.getenv("KEYCLOAK_REALM", "secure-apps")
+    keycloak_url: str = os.getenv("KEYCLOAK_URL", "http://localhost:8080")
+    realm_name: str = os.getenv("KEYCLOAK_REALM", "master")
     client_id: str = os.getenv("KEYCLOAK_CLIENT_ID", "mcp")
     client_secret: str = os.getenv("KEYCLOAK_CLIENT_SECRET", "")
 

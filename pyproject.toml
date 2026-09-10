@@ -42,6 +42,26 @@ dependencies = [
     "uuid-v7>=1.0.0,<2.0.0",
 ]
 
+[dependency-groups]
+# Development-only tooling -- NOT runtime dependencies.
+#
+# PEP 735 group rather than [project.optional-dependencies] or the legacy
+# [tool.uv] dev-dependencies: this repo is uv-managed (uv.lock is committed) and
+# uv installs the `dev` group by default for `uv run` / `uv sync`. That is what
+# makes the commands CONTRIBUTING.md documents -- `uv run ruff check .` and
+# `uv run ruff format --check .` -- work on a fresh clone with no extra flags.
+# An optional-dependencies extra would have needed `--extra dev` at every call
+# site, including the pre-push hook.
+#
+# Pinned to the 0.16 line, not floated: the [tool.ruff.lint] ignore list below
+# was written against 0.16.6 defaults, and ruff's rule set, rule codes and
+# formatter output are only stable within a minor series -- a different minor
+# can add rules that turn a clean tree red, or reformat files a contributor
+# never touched.
+dev = [
+    "ruff>=0.16.6,<0.17",
+]
+
 [tool.ruff]
 # This repo had NO ruff configuration and had never been linted: a first run of
 # `ruff check .` (0.16.6 defaults) reported 563 findings and `ruff format --check`
