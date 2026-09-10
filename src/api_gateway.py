@@ -9,20 +9,19 @@ This module implements a basic API Gateway that routes requests to the appropria
 This implements FR-GATEWAY-01, FR-GATEWAY-02, and FR-GATEWAY-07 from the roadmap.
 """
 
-import os
-import logging
 import asyncio
-import time
 import json
-from uuid_v7.base import uuid7
+import logging
+import os
+import time
 from datetime import datetime, timedelta
-from typing import Dict, List, Optional, Any, Tuple, Callable, Awaitable, cast
 
-from fastapi import FastAPI, Request, Response, HTTPException, Depends, status, Query
-from fastapi.responses import JSONResponse, StreamingResponse
-from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import redis.asyncio as redis
+from fastapi import FastAPI, Query, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, StreamingResponse
+from uuid_v7.base import uuid7
 
 # Set up logging
 logging.basicConfig(
@@ -97,14 +96,14 @@ class DomainMapping(BaseModel):
         ge=1,
         description="Requests per minute allowed for this domain",
     )
-    custom_headers: Dict[str, str] = Field(
+    custom_headers: dict[str, str] = Field(
         default_factory=dict, description="Custom headers to add to requests"
     )
     require_auth: bool = Field(
         True, description="Whether authentication is required for this domain"
     )
     enabled: bool = Field(True, description="Whether this domain mapping is enabled")
-    description: Optional[str] = Field(
+    description: str | None = Field(
         None, description="Description of this domain mapping"
     )
 
@@ -164,7 +163,7 @@ async def check_backend_health(backend_type: str, url: str) -> bool:
                 backend_health[backend_type]["error"] = error_msg
                 return False
     except Exception as e:
-        error_msg = f"Health check error: {str(e)}"
+        error_msg = f"Health check error: {e!s}"
         logger.warning(
             f"{backend_type.upper()} backend health check failed: {error_msg}"
         )
@@ -176,7 +175,6 @@ async def check_backend_health(backend_type: str, url: str) -> bool:
 
 async def load_domain_mappings():
     """Load domain mappings from Redis."""
-    global domain_mappings
     if not redis_client:
         logger.warning("Redis not available, skipping domain mappings load")
         return
@@ -235,8 +233,7 @@ async def delete_domain_mapping(domain: str) -> bool:
         await redis_client.delete(key)
 
         # Remove from local cache
-        if domain in domain_mappings:
-            del domain_mappings[domain]
+        domain_mappings.pop(domain, None)
 
         logger.info(f"Deleted domain mapping for {domain}")
         return True
@@ -245,7 +242,7 @@ async def delete_domain_mapping(domain: str) -> bool:
         return False
 
 
-async def get_domain_backend(request: Request) -> Tuple[str, str]:
+async def get_domain_backend(request: Request) -> tuple[str, str]:
     """
     Determine which backend to route to based on domain and path.
 
@@ -263,16 +260,19 @@ async def get_domain_backend(request: Request) -> Tuple[str, str]:
     mapping = domain_mappings.get(host)
     if mapping and mapping.get("enabled", True):
         backend_type = mapping.get("backend_type", "main")
-        if backend_type in backend_health and backend_health[backend_type]["healthy"]:
-            # Use the mapping's backend if it's healthy
-            if backend_type == "main":
-                return (backend_type, ENTERPRISE_MCP_SERVER_URL)
+        # Use the mapping's backend if it's healthy
+        if (
+            backend_type in backend_health
+            and backend_health[backend_type]["healthy"]
+            and backend_type == "main"
+        ):
+            return (backend_type, ENTERPRISE_MCP_SERVER_URL)
 
     # Fall back to path-based routing if no domain mapping or specified backend is unhealthy
     return get_target_backend(path)
 
 
-async def check_rate_limit(request: Request) -> Tuple[bool, Optional[int]]:
+async def check_rate_limit(request: Request) -> tuple[bool, int | None]:
     """
     Check if the request exceeds rate limits.
 
@@ -401,7 +401,7 @@ async def health_check_task():
 
 
 # Determine which backend to route to based on request path
-def get_target_backend(path: str) -> Tuple[str, str]:
+def get_target_backend(path: str) -> tuple[str, str]:
     """
     Determine which backend to route to based on request path.
 
@@ -455,26 +455,26 @@ async def proxy_request(request: Request, path: str):
     backend_type, target_url = await get_domain_backend(request)
 
     # Check if the target backend is healthy
-    if not backend_health[backend_type]["healthy"]:
-        # Try to refresh the health status if it's been a while
-        if (
-            time.time() - backend_health[backend_type]["last_checked"]
-            > HEALTH_CHECK_INTERVAL
-        ):
-            healthy = await check_backend_health(backend_type, target_url)
-            if not healthy:
-                # Still unhealthy, return error
-                response = JSONResponse(
-                    status_code=503,
-                    content={
-                        "error": "Service Unavailable",
-                        "message": f"The {backend_type} backend service is currently unavailable",
-                        "details": backend_health[backend_type]["error"],
-                    },
-                )
-                # Log the failed request
-                await log_request_analytics(request, 503, time.time() - start_time)
-                return response
+    # Try to refresh the health status if it's been a while
+    if (
+        not backend_health[backend_type]["healthy"]
+        and time.time() - backend_health[backend_type]["last_checked"]
+        > HEALTH_CHECK_INTERVAL
+    ):
+        healthy = await check_backend_health(backend_type, target_url)
+        if not healthy:
+            # Still unhealthy, return error
+            response = JSONResponse(
+                status_code=503,
+                content={
+                    "error": "Service Unavailable",
+                    "message": f"The {backend_type} backend service is currently unavailable",
+                    "details": backend_health[backend_type]["error"],
+                },
+            )
+            # Log the failed request
+            await log_request_analytics(request, 503, time.time() - start_time)
+            return response
 
     # Construct the target URL
     target_url = f"{target_url}/{path}"
@@ -486,8 +486,7 @@ async def proxy_request(request: Request, path: str):
     # Remove headers that shouldn't be forwarded
     headers_to_remove = ["host", "content-length", "connection"]
     for header in headers_to_remove:
-        if header in headers:
-            del headers[header]
+        headers.pop(header, None)
 
     # Add gateway identification
     headers["x-forwarded-by"] = "mcp-api-gateway"
@@ -801,14 +800,14 @@ async def get_analytics_summary(days: int = Query(7, ge=1, le=30)):
             status_code=500,
             content={
                 "status": "error",
-                "message": f"Error getting analytics summary: {str(e)}",
+                "message": f"Error getting analytics summary: {e!s}",
             },
         )
 
 
 @app.get("/api/admin/analytics/patterns", summary="Get Request Patterns")
 async def get_request_patterns(
-    domain: Optional[str] = None,
+    domain: str | None = None,
     days: int = Query(1, ge=1, le=7),
     limit: int = Query(20, ge=5, le=100),
 ):
@@ -889,7 +888,7 @@ async def get_request_patterns(
             status_code=500,
             content={
                 "status": "error",
-                "message": f"Error getting request patterns: {str(e)}",
+                "message": f"Error getting request patterns: {e!s}",
             },
         )
 

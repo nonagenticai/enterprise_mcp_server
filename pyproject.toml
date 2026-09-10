@@ -42,6 +42,54 @@ dependencies = [
     "uuid-v7>=1.0.0,<2.0.0",
 ]
 
+[tool.ruff]
+# This repo had NO ruff configuration and had never been linted: a first run of
+# `ruff check .` (0.16.6 defaults) reported 563 findings and `ruff format --check`
+# wanted to rewrite 10 of 26 files. 414 were auto-fixed and the rest fixed by hand.
+# What remains below is NOT debt-hiding: each entry is a rule whose "fix" would
+# change RUNTIME BEHAVIOUR, and this project has 4 tests in total, so a behavioural
+# regression would not be caught by anything. Each is listed with its reason and
+# should be revisited individually, ideally behind real test coverage.
+
+[tool.ruff.lint]
+ignore = [
+    # FastAPI REQUIRES callables in argument defaults -- `x = Depends(...)`,
+    # `q = Query(...)`. This is the framework's dependency-injection idiom, not a
+    # mistake; "fixing" it breaks injection. Straight false positive here.
+    "B008",
+
+    # Blind `except Exception:` at HTTP handler and background-task boundaries is
+    # deliberate: it converts an unexpected error into a 500 instead of killing the
+    # worker. Narrowing each site needs per-site knowledge of what can be raised.
+    "BLE001",
+
+    # Naive `datetime.now()` / `utcnow()`. These values are persisted and compared
+    # against timestamps already in the database. Making them tz-aware changes what
+    # is stored and how it compares to existing rows -- a data decision, not a lint
+    # one, and it must be done together with a migration.
+    "DTZ003",
+    "DTZ005",
+
+    # Blocking file I/O and subprocess calls inside async functions. The real fix
+    # needs an async file library (aiofiles) and an async subprocess API -- a new
+    # dependency and a rewrite of the call sites, not a lint fix.
+    "ASYNC221",
+    "ASYNC230",
+
+    # `try/except/pass`. Each surviving site is an intentional best-effort cleanup
+    # where a failure must not interrupt the caller.
+    "S110",
+
+    # `functools.lru_cache` on a method (holds `self` alive) and one `open()`
+    # outside a context manager. Both are real smells; both change lifetime or
+    # resource semantics if altered, so they are deferred rather than hidden.
+    "B019",
+    "SIM115",
+
+    # One `raise Exception(...)` that callers may already catch by type.
+    "TRY002",
+]
+
 [tool.pytest.ini_options]
 # Pinned explicitly rather than relying on rootdir discovery: the automated
 # dependency-upgrade pipeline runs `/workspace/.venv/bin/python -m pytest -q` from the
