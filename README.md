@@ -15,6 +15,8 @@ The core components are:
 
 This architecture allows for separation of concerns, enhanced security, and better scalability.
 
+`examples/` holds standalone example applications (e.g. `examples/ticketing_api.py`); they are not part of the MCP server and are not run by the Docker image.
+
 ## Architecture Diagram
 
 ```mermaid
@@ -41,7 +43,7 @@ graph TD
 - **CORS Handling**: Configurable Cross-Origin Resource Sharing.
 
 **Enterprise MCP Server (`src/server.py`, `src/asgi.py`):**
-- **Authentication & Authorization**: Secure token-based authentication (`client_credentials`) and role-based access control.
+- **Authentication & Authorization**: Keycloak-validated bearer tokens (`client_credentials`) and role-based access control.
 - **Audit Logging**: Comprehensive logging of significant events and tool interactions to a PostgreSQL database.
 - **Tool Definition Management**: API endpoints for creating, reading, updating, and deleting tool definitions in the database.
 - **Tool Versioning**: Support for managing different versions of tools.
@@ -153,9 +155,8 @@ This script will:
     ```bash
     uv sync
     ```
-    `pyproject.toml` and `uv.lock` are the authoritative dependency set — they are what the
-    Docker image and CI install from. (`requirements.txt` is retained for legacy consumers
-    and is not kept in sync.)
+    `pyproject.toml` and `uv.lock` are the authoritative — and only — dependency set. They
+    are what the Docker image and CI install from.
 2.  **Set Environment Variables**: Ensure all variables from `.env` are set in your shell. You'll need running PostgreSQL and Redis instances accessible.
 3.  **Run the API Gateway**:
     ```bash
@@ -175,12 +176,18 @@ Refer to the Swagger UI documentation for each service:
     -   Includes gateway admin endpoints (`/api/admin/domains`, `/api/admin/analytics/*`) and the main proxy route (`/{path:path}`).
 -   **Enterprise MCP Server Docs**: `http://<ENTERPRISE_MCP_SERVER_HOST>:<ENTERPRISE_MCP_PORT>/docs` (if directly accessible, or viewable through its codebase for understanding).
     -   Key endpoints (typically accessed via the Gateway):
-        -   `POST /token`: Obtain an authentication token.
         -   `/auth/*`: Authentication and user management.
         -   `/audit/*`: Audit log access.
         -   `/tools/*`: Tool definition management (CRUD).
         -   `/tool-versions/*`: Tool version management.
         -   `/mcp`: Core MCP communication endpoint (Streamable HTTP transport).
+
+    The containerised server (`src.asgi:app`, what the `Dockerfile` runs) does **not** mint
+    tokens — it only validates them, via `KeycloakAuthMiddleware` (`src/keycloak_auth/`).
+    Tokens come from Keycloak itself; see [Authentication Flow](#authentication-flow) below.
+    A separate `POST /token` endpoint does exist in `src/api.py`, but that is a standalone
+    REST admin server with its own `__main__` entry point — it is not mounted by `src.asgi`
+    and is not part of the Docker image's request path.
 
 ### MCP Client Configuration (e.g., `~/.cursor/mcp.json`)
 
@@ -198,32 +205,28 @@ Configure your MCP client (like Cursor) to connect to the **API Gateway**:
     "jsonrpc_version": "2.0",
     "auth": {
         "enabled": true,
-        // Token URL points to the Enterprise MCP Server's token endpoint,
-        // but the client will send requests through the Gateway.
-        // The Gateway needs to be configured to route /token requests appropriately,
-        // or the client needs to be aware of the Enterprise Server's direct token URL
-        // if the Gateway doesn't proxy /token.
-        // Assuming Gateway proxies or client uses direct Enterprise Server URL for token:
-        "token_url": "http://localhost:8030/token",
+        // Tokens are issued by Keycloak, not by the MCP server. Build this URL from the
+        // KEYCLOAK_URL and KEYCLOAK_REALM values in your .env.
+        "token_url": "http://localhost:8080/realms/master/protocol/openid-connect/token",
         "grant_type": "client_credentials",
-        "client_id": "your_client_id",      // From .env
-        "client_secret": "your_client_secret", // From .env
-        "content_type": "application/json", // Or "application/x-www-form-urlencoded" if server expects
+        "client_id": "enterprise-mcp-server",  // SERVICE_CLIENT_ID from .env
+        "client_secret": "your_client_secret", // SERVICE_CLIENT_SECRET from .env
+        "content_type": "application/x-www-form-urlencoded",
         "token_property": "access_token",
         "auth_header": "Bearer"
     }
 }
 ```
-**Note on Token URL**: The `token_url` should ideally be the API Gateway's path that routes to the Enterprise MCP Server's `/token` endpoint. If the Gateway doesn't explicitly proxy `/token`, the client might need the direct URL to the Enterprise Server's `/token` endpoint (`http://localhost:<ENTERPRISE_MCP_PORT>/token`). The example above uses the Gateway URL, assuming it handles or routes token requests.
+**Note on Token URL**: The `token_url` is a **Keycloak** endpoint, not an MCP Server or Gateway path — neither the Gateway nor the containerised Enterprise MCP Server issues tokens. Point it at `<KEYCLOAK_URL>/realms/<KEYCLOAK_REALM>/protocol/openid-connect/token` using the values you set in `.env`.
 
 ### Authentication Flow
 
-1.  The MCP Client requests an access token from the `/token` endpoint (via the API Gateway, which routes to the Enterprise MCP Server).
-    -   Uses `client_credentials` grant type with `client_id` and `client_secret` (defined in `.env` and loaded by the Enterprise MCP Server).
-2.  The Enterprise MCP Server validates credentials and returns an `access_token`.
+1.  The MCP Client requests an access token directly from Keycloak's token endpoint.
+    -   Uses `client_credentials` grant type with `SERVICE_CLIENT_ID` and `SERVICE_CLIENT_SECRET` (defined in `.env`; `KEYCLOAK_URL` and `KEYCLOAK_REALM` select the realm).
+2.  Keycloak validates the credentials and returns an `access_token` (a JWT).
 3.  The MCP Client includes this `access_token` in the `Authorization: Bearer <token>` header for all subsequent MCP requests (`/mcp`) to the API Gateway.
 4.  The API Gateway forwards the request (with the token) to the Enterprise MCP Server.
-5.  The Enterprise MCP Server validates the token before processing the request or delegating to the Tool Server.
+5.  The Enterprise MCP Server validates the token against Keycloak (`KeycloakAuthMiddleware`) before processing the request or delegating to the Tool Server. Exempt from authentication are `/`, `/health`, `/docs`, `/redoc` and `/openapi.json`, plus anything under the `/docs`, `/redoc`, `/static` and `/openapi.json` prefixes (`_is_excluded_path`).
 
 ## Database Schema
 

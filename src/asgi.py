@@ -13,8 +13,6 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 import logging
-import secrets
-import time
 import traceback
 from typing import Any, ClassVar
 
@@ -22,7 +20,6 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .keycloak_auth.middleware import KeycloakAuthMiddleware
@@ -153,50 +150,6 @@ app.add_middleware(
 app.add_middleware(KeycloakAuthMiddleware)
 
 
-# Authentication models
-class TokenRequest(BaseModel):
-    grant_type: str
-    client_id: str
-    client_secret: str
-
-
-class Token(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in: int = 3600
-
-
-# Simple in-memory token store
-VALID_CLIENTS = {"cursor_client": "cursor_secret"}
-active_tokens = {}
-
-
-@app.post("/token", response_model=Token)
-async def get_token(request: TokenRequest):
-    """
-    Authenticate client and generate access token.
-    This endpoint supports the client_credentials grant type.
-    """
-    # Validate client credentials
-    if request.grant_type != "client_credentials":
-        raise HTTPException(status_code=400, detail="Unsupported grant type")
-
-    if (
-        request.client_id not in VALID_CLIENTS
-        or VALID_CLIENTS[request.client_id] != request.client_secret
-    ):
-        raise HTTPException(status_code=401, detail="Invalid client credentials")
-
-    # Generate a new token
-    token = secrets.token_hex(32)
-    expiry = time.time() + 3600  # 1 hour from now
-
-    # Store the token
-    active_tokens[token] = {"client_id": request.client_id, "expires_at": expiry}
-
-    return Token(access_token=token, expires_in=3600)
-
-
 @app.get("/")
 async def root_info():
     """
@@ -213,7 +166,6 @@ async def root_info():
             "mcp_health": "/api/mcp-health",
             "docs": "/docs",
             "openapi_schema": "/openapi.json",
-            "token": "/token",
         },
         "usage": "Connect to the MCP endpoint at '/mcp' using Streamable HTTP transport.",
     }
