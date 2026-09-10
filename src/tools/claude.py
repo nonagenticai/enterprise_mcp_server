@@ -1,26 +1,23 @@
 from __future__ import annotations
 
-import os
 import subprocess
 from pathlib import Path
-from typing import Optional, List
-
-from dotenv import load_dotenv
-from fastmcp import FastMCP
-from pydantic import BaseModel, Field
 
 # Claude Code SDK (drives the CLI and parses its JSON stream)
 # pip install claude-code-sdk
 from claude_code_sdk import (
-    query,
-    ClaudeCodeOptions,
     AssistantMessage,
-    TextBlock,
-    ResultMessage,
+    ClaudeCodeOptions,
+    CLIJSONDecodeError,
     CLINotFoundError,
     ProcessError,
-    CLIJSONDecodeError,
+    ResultMessage,
+    TextBlock,
+    query,
 )
+from dotenv import load_dotenv
+from fastmcp import FastMCP
+from pydantic import BaseModel, Field
 
 load_dotenv()
 
@@ -39,19 +36,19 @@ DEFAULT_OPTIONS = ClaudeCodeOptions(
 
 class ClaudeCodeParams(BaseModel):
     prompt: str = Field(..., description="User prompt for Claude Code.")
-    system_prompt: Optional[str] = Field(
+    system_prompt: str | None = Field(
         default=None, description="Override the system prompt."
     )
-    path: Optional[str] = Field(
+    path: str | None = Field(
         default=None, description="Working directory for the run (cwd)."
     )
-    allowed_tools: Optional[List[str]] = Field(
+    allowed_tools: list[str] | None = Field(
         default=None, description="Whitelist tools, e.g. ['Read','Write','Bash']."
     )
-    permission_mode: Optional[str] = Field(
+    permission_mode: str | None = Field(
         default=None, description="plan | acceptEdits | bypassPermissions"
     )
-    max_turns: Optional[int] = Field(
+    max_turns: int | None = Field(
         default=None, ge=1, le=20, description="Cap agent loop iterations."
     )
 
@@ -88,7 +85,7 @@ async def _run_claude_code(params: ClaudeCodeParams) -> str:
         await _check_claude_cli_availability()
         await _check_authentication_status()
     except RuntimeError as e:
-        return f"❌ Pre-flight check failed: {str(e)}\n\nTo fix this:\n1. Ensure Claude CLI is installed\n2. Run claude_auth_login to authenticate\n3. Check claude_auth_status for details"
+        return f"❌ Pre-flight check failed: {e!s}\n\nTo fix this:\n1. Ensure Claude CLI is installed\n2. Run claude_auth_login to authenticate\n3. Check claude_auth_status for details"
 
     try:
         async for message in query(prompt=params.prompt, options=options):
@@ -96,11 +93,13 @@ async def _run_claude_code(params: ClaudeCodeParams) -> str:
                 for block in message.content:
                     if isinstance(block, TextBlock) and block.text:
                         chunks.append(block.text)
-            elif isinstance(message, ResultMessage):
+            elif (
+                isinstance(message, ResultMessage)
                 # You could inspect message.cost_usd, tool results, etc. here.
-                if hasattr(message, "cost_usd") and message.cost_usd > 0:
-                    chunks.append(f"\n💰 Request cost: ${message.cost_usd:.4f}")
-                pass
+                and hasattr(message, "cost_usd")
+                and message.cost_usd > 0
+            ):
+                chunks.append(f"\n💰 Request cost: ${message.cost_usd:.4f}")
 
     except CLINotFoundError as e:
         # Claude Code CLI not installed in the image
@@ -153,7 +152,7 @@ async def _run_claude_code(params: ClaudeCodeParams) -> str:
     except Exception as e:
         # Catch-all for unexpected errors
         error_msg = (
-            f"💥 Unexpected error during Claude execution: {type(e).__name__}: {str(e)}"
+            f"💥 Unexpected error during Claude execution: {type(e).__name__}: {e!s}"
         )
         raise RuntimeError(error_msg) from e
 
@@ -167,11 +166,10 @@ async def _run_claude_code(params: ClaudeCodeParams) -> str:
 
 async def _check_claude_cli_availability() -> None:
     """Check if Claude CLI is available and accessible"""
-    import subprocess
 
     try:
         result = subprocess.run(
-            ["which", "claude"], capture_output=True, text=True, timeout=5
+            ["which", "claude"], capture_output=True, text=True, timeout=5, check=False
         )
         if result.returncode != 0:
             raise RuntimeError("Claude CLI not found in PATH")
@@ -191,11 +189,11 @@ async def _check_authentication_status() -> None:
 @claude_mcp.tool()
 async def claude_code(
     prompt: str,
-    system_prompt: Optional[str] = None,
-    path: Optional[str] = None,
-    allowed_tools: Optional[List[str]] = None,
-    permission_mode: Optional[str] = None,
-    max_turns: Optional[int] = None,
+    system_prompt: str | None = None,
+    path: str | None = None,
+    allowed_tools: list[str] | None = None,
+    permission_mode: str | None = None,
+    max_turns: int | None = None,
 ) -> str:
     """
     Execute Claude Code CLI to generate, modify, or analyze code.

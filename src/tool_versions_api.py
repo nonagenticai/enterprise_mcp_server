@@ -1,12 +1,14 @@
 import logging
-from typing import Dict, Optional, List, Any, Annotated
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel, Field
 from datetime import datetime
-from .auth import get_current_user, requires_permission
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, Field
+
 from .audit import AuditLogService
+from .auth import requires_permission
+from .dependencies import get_audit_service, get_db
 from .mcp_postgres_db import MCPPostgresDB
-from .dependencies import get_db, get_audit_service
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ class ToolVersionsResponse(BaseModel):
     tool_id: str
     tool_name: str
     current_version: int
-    versions: List[ToolVersionResponse]
+    versions: list[ToolVersionResponse]
 
 
 class RestoreVersionRequest(BaseModel):
@@ -48,7 +50,7 @@ async def get_tool_versions(
     tool_name: str,
     db: Annotated[MCPPostgresDB, Depends(get_db)],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
-    current_user: Annotated[Dict[str, Any], Depends(requires_permission("tool:read"))],
+    current_user: Annotated[dict[str, Any], Depends(requires_permission("tool:read"))],
     request: Request = None,
 ):
     """
@@ -127,7 +129,7 @@ async def restore_tool_version(
     db: Annotated[MCPPostgresDB, Depends(get_db)],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("tool:update"))
+        dict[str, Any], Depends(requires_permission("tool:update"))
     ],
     request: Request = None,
 ):

@@ -1,25 +1,23 @@
 from __future__ import annotations
 
 import asyncio
-import json
+import logging
 import os
 import sqlite3
-from uuid_v7.base import uuid7
-import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from concurrent.futures.thread import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, Callable, TypeVar, List, Optional, Dict
-from typing_extensions import ParamSpec, LiteralString
+from typing import Any, LiteralString, TypeVar
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from typing_extensions import ParamSpec
+from uuid_v7.base import uuid7
 
 P = ParamSpec("P")
 R = TypeVar("R")
@@ -36,7 +34,9 @@ app = FastAPI(
 
 # Configure CORS
 _cors_allowed_origins = [
-    o.strip() for o in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",") if o.strip()
+    o.strip()
+    for o in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
+    if o.strip()
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -55,7 +55,7 @@ logger = logging.getLogger(__name__)
 class CleaningRequestPayload(BaseModel):
     location: str = Field(..., description="Exact location of the incident")
     severity: int = Field(..., ge=1, le=5, description="Severity level (1-5 scale)")
-    contact_email: Optional[str] = Field(None, description="Optional contact email")
+    contact_email: str | None = Field(None, description="Optional contact email")
 
 
 @app.post("/create-request", summary="Create a new cleaning request", status_code=201)
@@ -69,10 +69,8 @@ async def http_create_request(request: Request, payload: CleaningRequestPayload)
         return JSONResponse(content=result, status_code=201)  # 201 Created
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except Exception as e:
-        logger.error(
-            f"Unexpected error in /create-request endpoint: {e}", exc_info=True
-        )
+    except Exception:
+        logger.exception("Unexpected error in /create-request endpoint")
         raise HTTPException(
             status_code=500, detail="Internal server error during request creation."
         )
@@ -98,8 +96,8 @@ async def list_tickets(request: Request):
     try:
         result = await get_all_tickets()
         return JSONResponse(content=result, status_code=200)
-    except Exception as e:
-        logger.error(f"Unexpected error in /tickets endpoint: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Unexpected error in /tickets endpoint")
         raise HTTPException(
             status_code=500, detail="Internal server error while retrieving tickets."
         )
@@ -189,7 +187,7 @@ class CleaningRequestDB:
         )
         return request_id
 
-    async def get_request(self, request_id: str) -> Optional[Dict[str, Any]]:
+    async def get_request(self, request_id: str) -> dict[str, Any] | None:
         """Get a cleaning request by its ID."""
         cursor = await self._asyncify(
             self._execute,
@@ -227,7 +225,7 @@ class CleaningRequestDB:
             *args,
         )
 
-    async def get_all_requests(self) -> List[Dict[str, Any]]:
+    async def get_all_requests(self) -> list[dict[str, Any]]:
         """Get all cleaning requests from the database."""
         return await self.fetchall(
             "SELECT * FROM cleaning_requests ORDER BY created_at DESC"

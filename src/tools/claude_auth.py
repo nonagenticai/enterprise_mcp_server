@@ -1,20 +1,18 @@
 from __future__ import annotations
 
-import os
-import json
-import subprocess
-from pathlib import Path
-from typing import Optional, Dict, Any
-import webbrowser
 import asyncio
-import aiohttp
-from aiohttp import web
+import json
+import os
 import socket
+import subprocess
 from contextlib import closing
+from pathlib import Path
+from typing import Any
 
+from aiohttp import web
 from dotenv import load_dotenv
 from fastmcp import FastMCP
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 load_dotenv()
 
@@ -33,8 +31,8 @@ class AuthStatus(BaseModel):
     is_authenticated: bool
     config_exists: bool
     cli_installed: bool
-    details: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
+    details: dict[str, Any] | None = None
+    error: str | None = None
 
 
 def find_free_port() -> int:
@@ -45,7 +43,7 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-async def start_oauth_callback_server(port: int) -> Dict[str, Any]:
+async def start_oauth_callback_server(port: int) -> dict[str, Any]:
     """
     Start a temporary HTTP server to receive OAuth callback
     Returns the received authentication data
@@ -120,7 +118,7 @@ async def claude_auth_status() -> str:
     try:
         # Check if Claude CLI is installed
         result = subprocess.run(
-            ["which", "claude"], capture_output=True, text=True, timeout=5
+            ["which", "claude"], capture_output=True, text=True, timeout=5, check=False
         )
         status.cli_installed = result.returncode == 0
 
@@ -143,7 +141,7 @@ async def claude_auth_status() -> str:
                     }
                     status.is_authenticated = status.details["has_token"]
             except Exception as e:
-                status.error = f"Error reading config: {str(e)}"
+                status.error = f"Error reading config: {e!s}"
         else:
             status.error = (
                 "No authentication config found. Run claude_auth_login to authenticate."
@@ -152,14 +150,14 @@ async def claude_auth_status() -> str:
     except subprocess.TimeoutExpired:
         status.error = "Timeout checking Claude CLI status"
     except Exception as e:
-        status.error = f"Unexpected error: {str(e)}"
+        status.error = f"Unexpected error: {e!s}"
 
     return json.dumps(status.model_dump(), indent=2)
 
 
 @claude_auth_mcp.tool()
 async def claude_auth_login(
-    browser_auth: bool = True, api_key: Optional[str] = None
+    browser_auth: bool = True, api_key: str | None = None
 ) -> str:
     """
     Perform Claude Code CLI authentication.
@@ -209,7 +207,7 @@ async def claude_auth_login(
                 # Generate auth URL (this would need to be implemented based on Claude's OAuth flow)
                 auth_url = f"https://claude.ai/auth?callback={callback_url}"
 
-                print(f"\nPlease open this URL in your browser to authenticate:")
+                print("\nPlease open this URL in your browser to authenticate:")
                 print(auth_url)
                 print("\nWaiting for authentication...")
 
@@ -235,6 +233,7 @@ async def claude_auth_login(
                     capture_output=True,
                     text=True,
                     timeout=300,  # 5 minute timeout
+                    check=False,
                 )
 
                 if result.returncode == 0:
@@ -246,10 +245,10 @@ async def claude_auth_login(
         else:
             return "✗ No authentication method specified"
 
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return "✗ Authentication timeout - no response received"
     except Exception as e:
-        return f"✗ Authentication error: {str(e)}"
+        return f"✗ Authentication error: {e!s}"
 
 
 @claude_auth_mcp.tool()
@@ -272,7 +271,7 @@ async def claude_auth_logout() -> str:
         else:
             return "ℹ Already logged out (no config file found)"
     except Exception as e:
-        return f"✗ Error during logout: {str(e)}"
+        return f"✗ Error during logout: {e!s}"
 
 
 @claude_auth_mcp.tool()
@@ -290,10 +289,10 @@ async def claude_auth_test() -> str:
 
         # Try a simple Claude query
         from claude_code_sdk import (
-            query,
-            ClaudeCodeOptions,
             AssistantMessage,
+            ClaudeCodeOptions,
             TextBlock,
+            query,
         )
 
         test_prompt = "Say 'Authentication test successful!' if you can read this."
@@ -314,7 +313,7 @@ async def claude_auth_test() -> str:
             return f"⚠ Got response but unexpected content: {response_text}"
 
     except Exception as e:
-        return f"✗ Authentication test failed: {str(e)}"
+        return f"✗ Authentication test failed: {e!s}"
 
 
 # Export the MCP instance

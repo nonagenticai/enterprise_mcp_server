@@ -294,3 +294,6 @@ archive/
 *.sqlite
 
 claude-desktop-transport-bridge/
+
+# Local Claude Code settings (per-machine; never commit)
+.claude/settings.local.json

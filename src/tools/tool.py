@@ -1,6 +1,5 @@
 from dotenv import load_dotenv
-from fastmcp import FastMCP, Context
-from pydantic import BaseModel, Field
+from fastmcp import FastMCP
 
 load_dotenv()
 

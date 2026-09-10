@@ -1,14 +1,15 @@
-import os
-import logging
-import jwt
-from uuid_v7.base import uuid7
-from typing import Dict, List, Optional, Set, Any, Union, Annotated
-from datetime import datetime, timezone, timedelta
-from fastapi import Depends, HTTPException, status, Request
-from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-import secrets
 import hashlib
 import hmac
+import logging
+import os
+import secrets
+from datetime import UTC, datetime, timedelta
+from typing import Annotated, Any
+
+import jwt
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+from uuid_v7.base import uuid7
 
 # Import JWT exceptions with fallbacks for different PyJWT versions
 try:
@@ -45,7 +46,7 @@ security = HTTPBearer()
 
 # --- Helper for Scope Checking ---
 def check_scope_permission(
-    required_permission: str, granted_scopes_str: Optional[str]
+    required_permission: str, granted_scopes_str: str | None
 ) -> bool:
     """
     Checks if a required permission is granted by a space-separated scope string.
@@ -128,7 +129,7 @@ class AuthService:
             "description": "Authentication and authorization service instance",
         }
 
-    async def create_access_token(self, data: Dict) -> str:
+    async def create_access_token(self, data: dict) -> str:
         """
         Create a JWT access token.
 
@@ -144,7 +145,7 @@ class AuthService:
         encoded_jwt = jwt.encode(to_encode, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)
         return encoded_jwt
 
-    def decode_token(self, token: str) -> Dict:
+    def decode_token(self, token: str) -> dict:
         """
         Decode and validate a JWT token.
 
@@ -274,7 +275,7 @@ class AuthService:
 
     async def authenticate_user(
         self, username: str, password: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Authenticate a user with username and password.
 
@@ -296,7 +297,7 @@ class AuthService:
 
         return user
 
-    async def authenticate_api_key(self, api_key: str) -> Optional[Dict[str, Any]]:
+    async def authenticate_api_key(self, api_key: str) -> dict[str, Any] | None:
         """
         Authenticate a client with an API key.
 
@@ -319,7 +320,7 @@ class AuthService:
 
         return None
 
-    async def get_user_permissions(self, user_id: int) -> Set[str]:
+    async def get_user_permissions(self, user_id: int) -> set[str]:
         """
         Get all permissions for a user based on their roles.
 
@@ -382,10 +383,7 @@ class AuthService:
 
         # Check for action wildcard (e.g., "*:read" grants read permission on all resources)
         action_wildcard = f"*:{action}"
-        if action_wildcard in permissions:
-            return True
-
-        return False
+        return action_wildcard in permissions
 
     async def initialize_roles_and_permissions(self):
         """Initialize default roles and permissions if none exist."""
@@ -463,64 +461,63 @@ class AuthService:
         }
 
         # Transaction to ensure atomicity
-        async with self.db.pool.acquire() as conn:
-            async with conn.transaction():
-                # First, check if we already have any roles
-                existing_roles = await conn.fetch("SELECT COUNT(*) as count FROM roles")
-                if existing_roles and existing_roles[0]["count"] > 0:
-                    logger.info(
-                        f"Found {existing_roles[0]['count']} existing roles. Checking for admin role consistency."
-                    )
+        async with self.db.pool.acquire() as conn, conn.transaction():
+            # First, check if we already have any roles
+            existing_roles = await conn.fetch("SELECT COUNT(*) as count FROM roles")
+            if existing_roles and existing_roles[0]["count"] > 0:
+                logger.info(
+                    f"Found {existing_roles[0]['count']} existing roles. Checking for admin role consistency."
+                )
 
-                    # Check if the admin role exists and has the right description
-                    admin_role = await conn.fetchrow(
-                        "SELECT id, description FROM roles WHERE name = 'admin'"
+                # Check if the admin role exists and has the right description
+                admin_role = await conn.fetchrow(
+                    "SELECT id, description FROM roles WHERE name = 'admin'"
+                )
+                if admin_role:
+                    await conn.execute(
+                        "UPDATE roles SET description = $1 WHERE name = 'admin'",
+                        "Full administrative access with all permissions",
                     )
-                    if admin_role:
-                        await conn.execute(
-                            "UPDATE roles SET description = $1 WHERE name = 'admin'",
-                            "Full administrative access with all permissions",
-                        )
-                        logger.info("Updated admin role description for consistency.")
+                    logger.info("Updated admin role description for consistency.")
 
-                # Create permissions
-                perm_name_to_id = {}
-                for perm in permissions_to_create:
+            # Create permissions
+            perm_name_to_id = {}
+            for perm in permissions_to_create:
+                perm_id = await conn.fetchval(
+                    "INSERT INTO permissions (name, description) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET description = $2 RETURNING id",
+                    perm["name"],
+                    perm["description"],
+                )
+                if not perm_id:  # If failure in returning id, get existing ID
                     perm_id = await conn.fetchval(
-                        "INSERT INTO permissions (name, description) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET description = $2 RETURNING id",
-                        perm["name"],
-                        perm["description"],
+                        "SELECT id FROM permissions WHERE name = $1", perm["name"]
                     )
-                    if not perm_id:  # If failure in returning id, get existing ID
-                        perm_id = await conn.fetchval(
-                            "SELECT id FROM permissions WHERE name = $1", perm["name"]
-                        )
-                    perm_name_to_id[perm["name"]] = perm_id
+                perm_name_to_id[perm["name"]] = perm_id
 
-                # Create roles
-                role_name_to_id = {}
-                for role in roles_to_create:
+            # Create roles
+            role_name_to_id = {}
+            for role in roles_to_create:
+                role_id = await conn.fetchval(
+                    "INSERT INTO roles (name, description) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET description = $2 RETURNING id",
+                    role["name"],
+                    role["description"],
+                )
+                if not role_id:  # If failure in returning id, get existing ID
                     role_id = await conn.fetchval(
-                        "INSERT INTO roles (name, description) VALUES ($1, $2) ON CONFLICT (name) DO UPDATE SET description = $2 RETURNING id",
-                        role["name"],
-                        role["description"],
+                        "SELECT id FROM roles WHERE name = $1", role["name"]
                     )
-                    if not role_id:  # If failure in returning id, get existing ID
-                        role_id = await conn.fetchval(
-                            "SELECT id FROM roles WHERE name = $1", role["name"]
-                        )
-                    role_name_to_id[role["name"]] = role_id
+                role_name_to_id[role["name"]] = role_id
 
-                # Assign permissions to roles
-                for role_name, perm_names in role_permissions.items():
-                    role_id = role_name_to_id[role_name]
-                    for perm_name in perm_names:
-                        perm_id = perm_name_to_id[perm_name]
-                        await conn.execute(
-                            "INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-                            role_id,
-                            perm_id,
-                        )
+            # Assign permissions to roles
+            for role_name, perm_names in role_permissions.items():
+                role_id = role_name_to_id[role_name]
+                for perm_name in perm_names:
+                    perm_id = perm_name_to_id[perm_name]
+                    await conn.execute(
+                        "INSERT INTO role_permissions (role_id, permission_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+                        role_id,
+                        perm_id,
+                    )
 
         logger.info("Default roles and permissions initialized successfully.")
 
@@ -529,7 +526,7 @@ async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials, Depends(security)],
     # Use the standard dependency function
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Dependency to get the current authenticated user from token."""
     token = credentials.credentials
     credentials_exception = HTTPException(
@@ -553,7 +550,7 @@ async def get_current_user(
             # Check token expiry
             expires_at = token_data.get("expires_at")
             now = (
-                datetime.now(timezone.utc)
+                datetime.now(UTC)
                 if expires_at and expires_at.tzinfo
                 else datetime.now()
             )
@@ -628,10 +625,10 @@ async def get_current_user(
     except JWTError as e:
         logger.error(f"Token validation error (JWTError): {e}")
         raise credentials_exception
-    except HTTPException as http_exc:  # Re-raise specific HTTP exceptions
-        raise http_exc
-    except Exception as e:
-        logger.error(f"Unexpected error during token validation: {e}", exc_info=True)
+    except HTTPException:  # Re-raise specific HTTP exceptions
+        raise
+    except Exception:
+        logger.exception("Unexpected error during token validation")
         raise credentials_exception
 
 
@@ -645,8 +642,8 @@ def requires_permission(required_permission: str):
         # Use the standard dependency function
         auth_service: Annotated[AuthService, Depends(get_auth_service)],
         # Get current user info using the updated get_current_user
-        current_user: Annotated[Dict[str, Any], Depends(get_current_user)],
-    ) -> Dict[str, Any]:
+        current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+    ) -> dict[str, Any]:
         """Dependency function that checks for the required permission."""
         user_id = current_user.get("id")
         client_id = current_user.get("client_id")
