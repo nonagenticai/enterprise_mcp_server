@@ -52,3 +52,227 @@ jobs:
       # `-p no:cacheprovider` keeps a stale .pytest_cache out of a fresh runner's tree.
       - name: Run test suite
         run: uv run --no-sync python -m pytest -p no:cacheprovider
+
+  # WHY THIS JOB EXISTS. PR #142 pushed `aa_feature_probe/receipts.py` ending
+  # `return "\n".join(lines)}], ` -- a SyntaxError -- and BOTH existing checks went green.
+  # Neither could see it: `smoke` never installs the project, and `tests` collects only
+  # `testpaths = ["tests"]` (pyproject.toml), so nothing outside `tests/` is ever parsed.
+  #
+  # WHAT THIS ASSERTS: every file `git ls-files '*.py'` reports is syntactically valid
+  # Python under the interpreter this repo pins (3.12). Tracked-only and pattern-scoped, so
+  # `src/asgi.py.auth_fix`, `*.keycloak_bak*` and untracked scratch files stay out of scope,
+  # and `compileall` cannot silently widen it. It fails loudly if the file list comes back
+  # EMPTY -- a gate that counts no sites cannot fail one.
+  #
+  # WHAT IT DOES *NOT* ASSERT: nothing about behaviour, imports, types, style or security.
+  # It is a parse gate, not a lint gate: there is no ruff/mypy config in this repo and this
+  # job does not add one. A file that parses can still raise ImportError on first import,
+  # and this job will not notice. It also installs NO dependencies and does not run pytest --
+  # deliberately, so it cannot be laundered by a resolver, a lockfile or a collection miss.
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # Plain setup-python, not setup-uv: this job must not depend on the dependency graph.
+      # Pinned to 3.12 because syntax acceptance is interpreter-version-dependent and
+      # `requires-python = ">=3.12,<3.14"` -- the floor is what has to parse.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Parse every tracked Python file
+        shell: bash
+        run: |
+          set -euo pipefail
+          git ls-files -z '*.py' > tracked-py.z
+          python - tracked-py.z <<'PY'
+          import ast, pathlib, sys
+
+          listing = pathlib.Path(sys.argv[1]).read_bytes()
+          files = [p for p in listing.split(b"\0") if p]
+          if not files:
+              print("FAIL: `git ls-files '*.py'` matched 0 files -- this gate is blind, not clean")
+              sys.exit(1)
+
+          bad = 0
+          for raw in files:
+              name = raw.decode("utf-8", "surrogateescape")
+              try:
+                  ast.parse(pathlib.Path(name).read_bytes(), filename=name)
+              except SyntaxError as exc:
+                  bad += 1
+                  print(f"FAIL {name}:{exc.lineno}:{exc.offset}: {exc.msg}")
+              except (ValueError, OSError) as exc:
+                  bad += 1
+                  print(f"FAIL {name}: {type(exc).__name__}: {exc}")
+
+          if bad:
+              print(f"\n{bad} of {len(files)} tracked Python file(s) do not parse")
+              sys.exit(1)
+          print(f"PASS: all {len(files)} tracked Python file(s) parse under Python {sys.version.split()[0]}")
+          PY
+
+  # WHY THIS JOB EXISTS. The `aa_*_probe/` packages carry the harness's seeded defects and
+  # their `check*.py` files are the ACCEPTANCE ORACLES (`python -m <pkg>.<check>`, exit 0 ==
+  # green). `tests` above refuses to run any of them, correctly: four are red on `main` BY
+  # DESIGN and running them unconditionally would pin `main` permanently red. The consequence
+  # was that a conveyor PR claiming to fix a probe was never graded by that probe's own oracle.
+  #
+  # WHAT THIS ASSERTS, in two independent parts:
+  #  1. SCOPED -- for every `aa_*_probe/` package touched by this PR's diff against its merge
+  #     base, every tracked `check*.py` in it must exit 0. On `main`, and on any PR that
+  #     touches no probe, this selects NOTHING and the job is GREEN (not skipped).
+  #  2. INVARIANT -- `aa_refactor_probe.check` and `aa_iac_probe.check_iac` run ALWAYS. Both
+  #     are green on `main` and both exist to catch the opposite failure: a "fix" that deletes
+  #     the thing that was findable. They are also this job's positive control -- 2 oracles
+  #     always execute, so a pass can never mean "nothing ran".
+  #
+  # WHAT IT DOES *NOT* ASSERT: it does not grade untouched probes (so `main` stays green with
+  # aa_bugfix_probe / aa_feature_probe red), it is not a security-scanner delta (which is the
+  # real verdict for the srcsec and iac probes -- see their oracle docstrings), and it installs
+  # no dependencies because every oracle here is stdlib-only. It never edits an oracle and a
+  # PR that edits one is still graded by the edited file -- treat an oracle diff as a red flag.
+  probe-oracles:
+    runs-on: ubuntu-latest
+    steps:
+      # fetch-depth: 0 -- the scoped half needs the merge base. An unresolvable base makes
+      # this job FAIL below rather than quietly select nothing.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run invariant oracles, plus the oracles of every touched probe
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "${PR_BASE_SHA:-}" ]; then BASE="${PR_BASE_SHA}"; else BASE="origin/main"; fi
+          if ! BASE_SHA="$(git rev-parse --verify --quiet "${BASE}^{commit}")"; then
+            echo "FAIL: cannot resolve diff base '${BASE}' -- refusing to report green off an"
+            echo "      empty selection. Is fetch-depth: 0 still set on actions/checkout?"
+            exit 1
+          fi
+
+          CHANGED="$(git diff --name-only "${BASE_SHA}...HEAD")"
+          TOUCHED="$(printf '%s\n' "${CHANGED}" | sed -n 's#^\(aa_[A-Za-z0-9_]*_probe\)/.*#\1#p' | sort -u)"
+
+          INVARIANTS="aa_refactor_probe.check aa_iac_probe.check_iac"
+          SCOPED=""
+          for pkg in ${TOUCHED}; do
+            for f in $(git ls-files "${pkg}/check*.py"); do
+              SCOPED="${SCOPED} ${pkg}.$(basename "${f}" .py)"
+            done
+          done
+          # De-duplicate: a PR touching aa_iac_probe must not run check_iac twice.
+          SCOPED="$(printf '%s\n' ${SCOPED:-} | sed '/^$/d' | sort -u | tr '\n' ' ')"
+
+          echo "diff base            : ${BASE_SHA}"
+          echo "files changed        : $(printf '%s\n' "${CHANGED}" | sed '/^$/d' | wc -l | tr -d ' ')"
+          echo "probe pkgs touched   : ${TOUCHED:-(none)}"
+          echo "SCOPED oracles       : ${SCOPED:-(none selected -- nothing to grade)}"
+          echo "INVARIANT oracles    : ${INVARIANTS}"
+          echo
+
+          # ⛔ THE VERDICT IS "NO REGRESSION", NOT "ALL GREEN". This is the whole design, and
+          # requiring all-green was a real defect that I measured against a real PR before
+          # changing it. The probes here are DELIBERATELY seeded defective, and ONE package
+          # can hold SEVERAL INDEPENDENT gaps: aa_feature_probe holds check_new (no
+          # reserve_stock), check_poc (no poc.py) and check_update (no currency kwarg).
+          # The autonomous conveyor produced PR #144, which correctly fixes ONLY the update
+          # gap in one file. Measured exit codes:
+          #     oracle                          base(main)   PR #144 head
+          #     aa_feature_probe.check_new          1             1
+          #     aa_feature_probe.check_poc          1             1
+          #     aa_feature_probe.check_update       1             0   <- fixed
+          # An all-green rule marks that textbook-correct PR RED. A gate that fails every
+          # legitimate single-gap PR is worse than no gate: it trains everyone to ignore it.
+          # So each oracle is evaluated on the BASE and on HEAD, and only base==0 && head!=0
+          # (a real regression) is fatal. The two invariants are green on base by design, so
+          # this rule still protects them fully -- breaking one IS a regression.
+          BASE_WT="$(mktemp -d)"
+          if ! git worktree add --detach "${BASE_WT}" "${BASE_SHA}" >/dev/null 2>&1; then
+            echo "FAIL: could not create a base worktree at ${BASE_SHA}. Refusing to ASSUME a"
+            echo "      base status -- an assumed base lets a real regression through as"
+            echo "      'it was already red'."
+            exit 1
+          fi
+
+          # ⛔ THE INTERPRETER MUST EXIST BEFORE ANY ABSENCE IS BELIEVED. Without this, a
+          # missing `python` makes every invocation exit 127 -- and 127 was my absence
+          # sentinel, so every oracle would read "absent on base, cannot be a regression"
+          # and the job would report GREEN having executed NOTHING. I hit exactly that
+          # locally, where the binary is `python3`. An exit code that means both "clean"
+          # and "never ran" is not a gate.
+          if ! python -c 'pass' 2>/dev/null; then
+            echo "FAIL: no usable \`python\` on PATH. Refusing to grade -- an unrunnable"
+            echo "      interpreter must not be reported as 'nothing to regress'."
+            exit 1
+          fi
+
+          # Exit code of one oracle in one tree. 200 = the module is ABSENT in that tree --
+          # deliberately a value no Python process can return, so absence can never be
+          # confused with a real exit code (127 can and did).
+          ORACLE_ABSENT=200
+          oracle_exit() {
+            local tree="$1" mod="$2" rel
+            rel="$(printf '%s' "${mod}" | tr '.' '/').py"
+            [ -f "${tree}/${rel}" ] || return "${ORACLE_ABSENT}"
+            ( cd "${tree}" && python -m "${mod}" >/dev/null 2>&1 )
+          }
+
+          FAILED=""; EVALUATED=0; FIXED=""; STILLRED=""; HELD=""; NEW=""
+          for mod in ${INVARIANTS} ${SCOPED}; do
+            head_rel="$(printf '%s' "${mod}" | tr '.' '/').py"
+            if [ ! -f "${head_rel}" ]; then
+              # Deleted on HEAD but present on base is the delete-the-evidence case the
+              # invariants exist to catch. Absent in BOTH is a selection bug, also fatal.
+              echo "FAIL ${mod}: ${head_rel} does not exist on HEAD (an oracle was deleted?)"
+              FAILED="${FAILED} ${mod}"; continue
+            fi
+            # ⚠️ `cmd; x=$?` is NOT a set -e checked context, so a failing oracle would abort
+            # the whole job before any comparison ran -- i.e. the gate would die on exactly
+            # the seeded-red oracles it is built to tolerate. `|| x=$?` is the checked form.
+            h=0; oracle_exit "." "${mod}" || h=$?
+            b=0; oracle_exit "${BASE_WT}" "${mod}" || b=$?
+            EVALUATED=$((EVALUATED + 1))
+            if [ "${b}" -eq "${ORACLE_ABSENT}" ]; then
+              echo "NEW      ${mod}: absent on base, exit ${h} on HEAD (cannot be a regression)"
+              NEW="${NEW} ${mod}"
+              [ "${h}" -eq 0 ] || echo "         ...and it does not pass yet"
+            elif [ "${b}" -eq 0 ] && [ "${h}" -ne 0 ]; then
+              echo "REGRESSION ${mod}: base 0 -> HEAD ${h}  <-- THE ONLY FATAL CASE"
+              python -m "${mod}" || true
+              FAILED="${FAILED} ${mod}"
+            elif [ "${b}" -ne 0 ] && [ "${h}" -eq 0 ]; then
+              echo "FIXED    ${mod}: base ${b} -> HEAD 0"
+              FIXED="${FIXED} ${mod}"
+            elif [ "${b}" -ne 0 ] && [ "${h}" -ne 0 ]; then
+              echo "STILL RED ${mod}: base ${b} -> HEAD ${h} (pre-existing seeded defect, not a regression)"
+              STILLRED="${STILLRED} ${mod}"
+            else
+              echo "HELD     ${mod}: base 0 -> HEAD 0"
+              HELD="${HELD} ${mod}"
+            fi
+          done
+
+          git worktree remove --force "${BASE_WT}" >/dev/null 2>&1 || true
+
+          echo
+          if [ -n "${FAILED}" ]; then
+            echo "RED: regression(s) or missing oracle(s):${FAILED}"
+            exit 1
+          fi
+          # Positive control: the two invariants are unconditional, so anything below 2 means
+          # the runner never evaluated them and this green would be vacuous.
+          if [ "${EVALUATED}" -lt 2 ]; then
+            echo "FAIL: only ${EVALUATED} oracle(s) evaluated; the 2 invariant oracles are unconditional"
+            exit 1
+          fi
+          echo "GREEN: no regressions. ${EVALUATED} oracle(s) evaluated"
+          echo "   held     :${HELD:- (none)}"
+          echo "   fixed    :${FIXED:- (none)}"
+          echo "   still red:${STILLRED:- (none)}"
+          echo "   new      :${NEW:- (none)}"
