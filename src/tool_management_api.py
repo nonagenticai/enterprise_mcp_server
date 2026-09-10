@@ -2,34 +2,34 @@
 Tool management API endpoints for backup and restore functionality.
 """
 
-import logging
-import json
-from uuid_v7.base import uuid7
 import datetime
-from typing import Dict, List, Any, Optional, Annotated
+import json
+import logging
+import os
+import tempfile
+from pathlib import Path
+from typing import Annotated, Any
+
 from fastapi import (
     APIRouter,
-    Depends,
-    HTTPException,
-    UploadFile,
-    File,
-    Body,
     BackgroundTasks,
+    Body,
+    Depends,
+    File,
+    HTTPException,
     Query,
+    UploadFile,
     status,
 )
-from fastapi.responses import JSONResponse, FileResponse
-from pathlib import Path
-import tempfile
-import os
-import asyncio
-from pydantic import BaseModel, Field
+from fastapi.responses import FileResponse
 from fastmcp import FastMCP
+from pydantic import BaseModel, Field
+from uuid_v7.base import uuid7
 
-from .dependencies import get_db, get_auth_service, get_audit_service, get_tool_registry
-from .auth import requires_permission, get_current_user, AuthService
-from .mcp_postgres_db import MCPPostgresDB
 from .audit import AuditLogService
+from .auth import AuthService, get_current_user, requires_permission
+from .dependencies import get_audit_service, get_auth_service, get_db, get_tool_registry
+from .mcp_postgres_db import MCPPostgresDB
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +48,9 @@ class ToolInfo(BaseModel):
     """Information about a tool"""
 
     name: str
-    description: Optional[str] = None
-    version: Optional[str] = None
-    type: Optional[str] = None
+    description: str | None = None
+    version: str | None = None
+    type: str | None = None
 
 
 class ToolCreate(BaseModel):
@@ -76,13 +76,13 @@ class MultiFileToolCreate(BaseModel):
     entrypoint: str = Field(
         ..., description="Main file/function entry point (e.g., 'main.py')"
     )
-    files: Dict[str, str] = Field(
+    files: dict[str, str] = Field(
         ..., description="Dictionary of filename -> file content"
     )
     replace_existing: bool = Field(
         False, description="Whether to replace an existing tool with the same name"
     )
-    tool_dir_uuid: Optional[str] = Field(
+    tool_dir_uuid: str | None = Field(
         None, description="Optional tool directory UUID for grouping"
     )
 
@@ -92,17 +92,17 @@ class ToolResponse(BaseModel):
 
     success: bool
     message: str
-    tool_id: Optional[str] = None
+    tool_id: str | None = None
     tool_name: str
-    created_at: Optional[str] = None
-    version_number: Optional[int] = None
+    created_at: str | None = None
+    version_number: int | None = None
 
 
 @router.post("/add", response_model=ToolResponse, summary="Add New Tool")
 async def add_tool(
     tool_data: ToolCreate,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("tool:create"))
+        dict[str, Any], Depends(requires_permission("tool:create"))
     ],
     db: Annotated[MCPPostgresDB, Depends(get_db)],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
@@ -202,10 +202,10 @@ async def add_tool(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Tool validation failed: {str(ve)}",
+            detail=f"Tool validation failed: {ve!s}",
         )
     except Exception as e:
-        logger.error(f"Error creating tool '{tool_data.name}': {e}", exc_info=True)
+        logger.exception(f"Error creating tool '{tool_data.name}'")
 
         # Log failure
         await audit_service.log_event(
@@ -224,7 +224,7 @@ async def add_tool(
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating tool: {str(e)}",
+            detail=f"Error creating tool: {e!s}",
         )
 
 
@@ -234,7 +234,7 @@ async def add_tool(
 async def add_multi_file_tool(
     tool_data: MultiFileToolCreate,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("tool:create"))
+        dict[str, Any], Depends(requires_permission("tool:create"))
     ],
     db: Annotated[MCPPostgresDB, Depends(get_db)],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
@@ -358,12 +358,10 @@ async def add_multi_file_tool(
         )
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Multi-file tool validation failed: {str(ve)}",
+            detail=f"Multi-file tool validation failed: {ve!s}",
         )
     except Exception as e:
-        logger.error(
-            f"Error creating multi-file tool '{tool_data.name}': {e}", exc_info=True
-        )
+        logger.exception(f"Error creating multi-file tool '{tool_data.name}'")
 
         # Log failure
         await audit_service.log_event(
@@ -382,7 +380,7 @@ async def add_multi_file_tool(
 
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error creating multi-file tool: {str(e)}",
+            detail=f"Error creating multi-file tool: {e!s}",
         )
 
 
@@ -390,7 +388,7 @@ async def add_multi_file_tool(
 async def backup_tools(
     background_tasks: BackgroundTasks,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("tool:backup"))
+        dict[str, Any], Depends(requires_permission("tool:backup"))
     ],
     db: Annotated[MCPPostgresDB, Depends(get_db)],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
@@ -457,7 +455,7 @@ async def backup_tools(
 async def check_backup_status(
     backup_id: str,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("tool:backup"))
+        dict[str, Any], Depends(requires_permission("tool:backup"))
     ],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
 ):
@@ -526,9 +524,9 @@ async def check_backup_status(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error checking backup status: {e}", exc_info=True)
+        logger.exception("Error checking backup status")
         raise HTTPException(
-            status_code=500, detail=f"Error checking backup status: {str(e)}"
+            status_code=500, detail=f"Error checking backup status: {e!s}"
         )
 
 
@@ -536,7 +534,7 @@ async def check_backup_status(
 async def download_backup(
     filename: str,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("tool:backup"))
+        dict[str, Any], Depends(requires_permission("tool:backup"))
     ],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
 ):
@@ -588,7 +586,7 @@ async def download_backup(
 async def restore_tools(
     background_tasks: BackgroundTasks,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("tool:restore"))
+        dict[str, Any], Depends(requires_permission("tool:restore"))
     ],
     db: Annotated[MCPPostgresDB, Depends(get_db)],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
@@ -667,9 +665,9 @@ async def restore_tools(
         # Clean up the temporary file
         if os.path.exists(temp_file.name):
             os.unlink(temp_file.name)
-        logger.error(f"Error starting restore process: {e}", exc_info=True)
+        logger.exception("Error starting restore process")
         raise HTTPException(
-            status_code=500, detail=f"Error starting restore process: {str(e)}"
+            status_code=500, detail=f"Error starting restore process: {e!s}"
         )
 
 
@@ -677,7 +675,7 @@ async def restore_tools(
 async def check_restore_status(
     restore_id: str,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("tool:restore"))
+        dict[str, Any], Depends(requires_permission("tool:restore"))
     ],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
 ):
@@ -737,14 +735,14 @@ async def check_restore_status(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error checking restore status: {e}", exc_info=True)
+        logger.exception("Error checking restore status")
         raise HTTPException(
-            status_code=500, detail=f"Error checking restore status: {str(e)}"
+            status_code=500, detail=f"Error checking restore status: {e!s}"
         )
 
 
 # Add the list tools endpoint
-@router.get("/list", response_model=List[ToolInfo], tags=["tools"])
+@router.get("/list", response_model=list[ToolInfo], tags=["tools"])
 async def list_tools(
     tool_registry: Annotated[FastMCP, Depends(get_tool_registry)],
     current_user: Annotated[dict, Depends(get_current_user)],
@@ -869,7 +867,7 @@ async def _generate_backup(
         logger.info(f"Backup completed: {filename} with {len(tools)} tools")
 
     except Exception as e:
-        logger.error(f"Error generating backup {backup_id}: {e}", exc_info=True)
+        logger.exception(f"Error generating backup {backup_id}")
 
         # Log failure
         await audit_service.log_event(
@@ -1062,7 +1060,7 @@ async def _process_restore(
         )
 
     except Exception as e:
-        logger.error(f"Error processing restore {restore_id}: {e}", exc_info=True)
+        logger.exception(f"Error processing restore {restore_id}")
 
         # Log failure
         await audit_service.log_event(
