@@ -20,7 +20,7 @@ This architecture allows for separation of concerns, enhanced security, and bett
 ```mermaid
 graph TD
     Client["MCP Client e.g., Cursor"] --> APIGateway["API Gateway (src/api_gateway.py)"];
-    APIGateway -->|"MCP Requests (/sse, /messages)"| EnterpriseMCPServer["Enterprise MCP Server (src/server.py + src/asgi.py)"];
+    APIGateway -->|"MCP Requests (/mcp, Streamable HTTP)"| EnterpriseMCPServer["Enterprise MCP Server (src/server.py + src/asgi.py)"];
     APIGateway -->|"Admin, Analytics"| APIGatewayFeatures["Gateway Features (Rate Limit, Domain Mapping, Analytics via Redis)"];
     EnterpriseMCPServer -->|"Auth, Audit, Tool Mgmt"| EnterpriseFeatures["Core Services (Auth, Audit, Tool DB)"];
     EnterpriseMCPServer -->|"Mounts & Delegates"| ToolServerInstance["Tool Server (src/tools/tool.py)"];
@@ -46,7 +46,7 @@ graph TD
 - **Tool Definition Management**: API endpoints for creating, reading, updating, and deleting tool definitions in the database.
 - **Tool Versioning**: Support for managing different versions of tools.
 - **Mounts Tool Server**: Integrates the operational Tool Server.
-- **API Compatibility**: Provides MCP-compliant endpoints (`/sse`, `/messages/`) for client interaction, delegating tool execution to the mounted Tool Server.
+- **API Compatibility**: Provides an MCP-compliant Streamable HTTP endpoint (`/mcp`) for client interaction, delegating tool execution to the mounted Tool Server.
 
 **Tool Server (`src/tools/tool.py`):**
 - **Dedicated Tool Environment**: Isolated FastMCP instance for defining and executing operational tools.
@@ -67,7 +67,7 @@ graph TD
 ### Prerequisites
 
 - Docker and Docker Compose
-- Python 3.11+ (for local development)
+- Python 3.12 or 3.13 (for local development — `pyproject.toml` requires `>=3.12,<3.14`)
 - Node.js 20+ and npm (for Claude Code CLI)
 - An environment file (`.env`) based on `.env.example`
 
@@ -77,19 +77,25 @@ graph TD
     ```bash
     cp .env.example .env
     ```
-2.  **Edit `.env`**: Update placeholder values. Key variables include:
-    *   `POSTGRES_USER`, `POSTGRES_PASSWORD`, `POSTGRES_DB`, `POSTGRES_HOST`, `POSTGRES_PORT`: For PostgreSQL connection.
-    *   `REDIS_URL`: For Redis connection (used by API Gateway and potentially Enterprise Server).
-    *   `GATEWAY_PORT`, `GATEWAY_HOST`: For the API Gateway service.
-    *   `ENTERPRISE_MCP_PORT` (formerly `PORT` for `src/server.py`): Port for the Enterprise MCP Server.
-    *   `ENTERPRISE_MCP_SERVER_URL`: Full URL for the API Gateway to reach the Enterprise MCP Server (e.g., `http://enterprise_mcp_server:<ENTERPRISE_MCP_PORT>`).
-    *   `MCP_SERVER_NAME`: Name for the Enterprise MCP Server instance.
-    *   `CORS_ALLOWED_ORIGINS`: Comma-separated list of allowed origins for CORS.
-    *   `DEFAULT_RATE_LIMIT`: Default rate limit for the API Gateway.
-    *   `CLIENT_ID`, `CLIENT_SECRET`: Credentials for MCP client authentication (defined in `.env` and checked by Enterprise MCP Server).
-    *   `JWT_SECRET_KEY`, `JWT_ALGORITHM`, `ACCESS_TOKEN_EXPIRE_MINUTES`: For JWT generation by the Enterprise MCP Server.
+2.  **Edit `.env`**: Update placeholder values. **`.env.example` is the source of truth for
+    what belongs in `.env`** — it carries the secrets and per-deployment endpoints, and every
+    entry there ships with a placeholder you are expected to replace. Broadly, it covers:
+    *   Database credentials (`POSTGRES_PASSWORD_ENTERPRISE_MCP`, `POSTGRES_HOST`, and the
+        PgBouncer / SSL settings used to build the connection string).
+    *   Keycloak OAuth2 settings (`SERVICE_CLIENT_ID`, `SERVICE_CLIENT_SECRET`, `KEYCLOAK_URL`,
+        `KEYCLOAK_REALM`).
+    *   `JWT_SECRET_KEY` for token signing, and the admin bootstrap credentials.
+    *   `ANTHROPIC_API_KEY` for the Claude Code integration.
 
-    Ensure `POSTGRES_USER` and `POSTGRES_PASSWORD` in `.env` match the credentials used by the `postgres` service in `docker-compose.yml`.
+    Non-secret configuration is **not** kept in `.env` — it is set in `docker-compose.yml`
+    under the `mcp` service's `environment:` block. That is where `PORT`, `MCP_TRANSPORT`,
+    `MCP_SERVER_NAME`, `REDIS_URL`, `CORS_ALLOWED_ORIGINS`, `DEFAULT_RATE_LIMIT`,
+    `GATEWAY_HOST`/`GATEWAY_PORT`, `JWT_ALGORITHM` and
+    `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` live. Override them there rather than adding them to
+    `.env`.
+
+    The database credentials in `.env` must match those used by the `db` service in
+    `docker-compose.override.yml`.
 
 ### Quick Setup with Claude Integration
 
@@ -119,18 +125,22 @@ This script will:
     ```bash
     docker compose up -d
     ```
-    This will typically start:
-    *   `enterprise_mcp_server` service (which includes the API Gateway logic and mounts the Tool Server).
-    *   `postgres` service.
+    This will start:
+    *   `mcp` service — the Enterprise MCP Server (which mounts the Tool Server).
+    *   `db` service — PostgreSQL, defined in `docker-compose.override.yml`.
     *   `redis` service.
 
 3.  **Accessing the Services**:
-    *   **API Gateway**: `http://<GATEWAY_HOST>:<GATEWAY_PORT>` (e.g., `http://localhost:8000` if `GATEWAY_PORT=8000`). This is the main entry point for clients.
-        *   Gateway API Docs (Swagger UI): `http://<GATEWAY_HOST>:<GATEWAY_PORT>/docs`
-    *   **Enterprise MCP Server (usually accessed via Gateway)**: `http://<ENTERPRISE_MCP_SERVER_HOST>:<ENTERPRISE_MCP_PORT>` (e.g., `http://localhost:8029`).
-        *   Enterprise Server API Docs: `http://<ENTERPRISE_MCP_SERVER_HOST>:<ENTERPRISE_MCP_PORT>/docs`
-    *   MCP SSE Endpoint (via Gateway): `http://<GATEWAY_HOST>:<GATEWAY_PORT>/sse`
-    *   MCP Messages Endpoint (via Gateway): `http://<GATEWAY_HOST>:<GATEWAY_PORT>/messages/`
+
+    The compose stack publishes a single port, **`8030`**, on the `mcp` service. The API
+    Gateway (`src/api_gateway.py`) is part of the codebase but is not run as its own
+    container by `docker-compose.yml`, so there is no separate gateway port to connect to
+    out of the box.
+
+    *   **Enterprise MCP Server**: `http://localhost:8030`
+        *   API Docs (Swagger UI): `http://localhost:8030/docs`
+        *   Health: `http://localhost:8030/api/health`
+    *   MCP Endpoint (Streamable HTTP): `http://localhost:8030/mcp`
 
 4.  **Stopping the Services**:
     ```bash
@@ -139,12 +149,13 @@ This script will:
 
 ### Local Development (Without Docker)
 
-1.  **Install Dependencies**:
+1.  **Install Dependencies** (requires [uv](https://docs.astral.sh/uv/)):
     ```bash
-    pip install -r requirements.txt
-    # Ensure any other specific requirements files are installed
-    pip install uvicorn
+    uv sync
     ```
+    `pyproject.toml` and `uv.lock` are the authoritative dependency set — they are what the
+    Docker image and CI install from. (`requirements.txt` is retained for legacy consumers
+    and is not kept in sync.)
 2.  **Set Environment Variables**: Ensure all variables from `.env` are set in your shell. You'll need running PostgreSQL and Redis instances accessible.
 3.  **Run the API Gateway**:
     ```bash
@@ -169,7 +180,7 @@ Refer to the Swagger UI documentation for each service:
         -   `/audit/*`: Audit log access.
         -   `/tools/*`: Tool definition management (CRUD).
         -   `/tool-versions/*`: Tool version management.
-        -   `/sse`, `/messages/`: Core MCP communication endpoints.
+        -   `/mcp`: Core MCP communication endpoint (Streamable HTTP transport).
 
 ### MCP Client Configuration (e.g., `~/.cursor/mcp.json`)
 
@@ -177,8 +188,7 @@ Configure your MCP client (like Cursor) to connect to the **API Gateway**:
 
 ```json
 "MCP_API_Gateway": { // Use a descriptive name
-    "url": "http://localhost:8000/sse", // Points to API Gateway SSE
-    "post_url": "http://localhost:8000/messages/", // Points to API Gateway messages
+    "url": "http://localhost:8030/mcp", // Streamable HTTP endpoint
     "debug": true,
     "retry_timeout_ms": 600,
     "connection_timeout_ms": 6000,
@@ -194,7 +204,7 @@ Configure your MCP client (like Cursor) to connect to the **API Gateway**:
         // or the client needs to be aware of the Enterprise Server's direct token URL
         // if the Gateway doesn't proxy /token.
         // Assuming Gateway proxies or client uses direct Enterprise Server URL for token:
-        "token_url": "http://localhost:8000/token", // Or direct: "http://localhost:8029/token"
+        "token_url": "http://localhost:8030/token",
         "grant_type": "client_credentials",
         "client_id": "your_client_id",      // From .env
         "client_secret": "your_client_secret", // From .env
@@ -211,7 +221,7 @@ Configure your MCP client (like Cursor) to connect to the **API Gateway**:
 1.  The MCP Client requests an access token from the `/token` endpoint (via the API Gateway, which routes to the Enterprise MCP Server).
     -   Uses `client_credentials` grant type with `client_id` and `client_secret` (defined in `.env` and loaded by the Enterprise MCP Server).
 2.  The Enterprise MCP Server validates credentials and returns an `access_token`.
-3.  The MCP Client includes this `access_token` in the `Authorization: Bearer <token>` header for all subsequent MCP requests (`/sse`, `/messages/`, etc.) to the API Gateway.
+3.  The MCP Client includes this `access_token` in the `Authorization: Bearer <token>` header for all subsequent MCP requests (`/mcp`) to the API Gateway.
 4.  The API Gateway forwards the request (with the token) to the Enterprise MCP Server.
 5.  The Enterprise MCP Server validates the token before processing the request or delegating to the Tool Server.
 

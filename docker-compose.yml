@@ -21,7 +21,7 @@ services:
       MCP_TRANSPORT: http
 
       # Network Configuration
-      INTERNAL_SERVICES_IP: 127.0.0.1
+      INTERNAL_SERVICES_IP: ${INTERNAL_SERVICES_IP:-host.docker.internal}
 
       # Application Settings
       HOST: 0.0.0.0
@@ -29,15 +29,15 @@ services:
       TEMP_DIR: /tmp/enterprise_mcp
 
       # Database Configuration
-      POSTGRES_HOST: db
-      POSTGRES_PORT: 6432
+      POSTGRES_HOST: ${POSTGRES_HOST:-db}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
       POSTGRES_DB: enterprise_mcp_server
       POSTGRES_USER: enterprise_mcp_server
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD_ENTERPRISE_MCP}
       POSTGRES_SSLMODE: require
       POSTGRES_POOL_MIN_SIZE: 2
       POSTGRES_POOL_MAX_SIZE: 10
-      DATABASE_URL: postgresql://enterprise_mcp_server:${POSTGRES_PASSWORD_ENTERPRISE_MCP}@db:6432/enterprise_mcp_server?sslmode=require&sslcert=/app/certs/enterprise_mcp_server-cert.pem&sslkey=/app/certs/enterprise_mcp_server-key.pem&sslrootcert=/app/certs/ca-cert.pem
+      DATABASE_URL: postgresql://enterprise_mcp_server:${POSTGRES_PASSWORD_ENTERPRISE_MCP}@${PGBOUNCER_HOST:-db}:${PGBOUNCER_PORT:-5432}/enterprise_mcp_server?${DATABASE_SSL_PARAMS:-sslmode=require&sslcert=/app/certs/enterprise_mcp_server-cert.pem&sslkey=/app/certs/enterprise_mcp_server-key.pem&sslrootcert=/app/certs/ca-cert.pem}
 
       # Keycloak Configuration (OAuth2 Standard)
       SERVICE_CLIENT_ID: ${SERVICE_CLIENT_ID}
@@ -50,7 +50,7 @@ services:
       KEYCLOAK_SSL_VERIFY: true
 
       # Secrets Service Integration
-      SECRETS_URL: https://localhost:8543
+      SECRETS_URL: ${SECRETS_URL:-http://localhost:8543}
 
       # Redis Configuration
       REDIS_URL: redis://redis:6379
@@ -102,10 +102,6 @@ services:
     # ----------------------------------------------------------------------
     extra_hosts:
       - "host.docker.internal:host-gateway"
-      - "db:127.0.0.1"
-      - "localhost:127.0.0.1"
-      - "localhost:127.0.0.1"
-      - "db:127.0.0.1"
 
     # ----------------------------------------------------------------------
     # Volume Mounts
