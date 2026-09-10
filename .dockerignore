@@ -8,9 +8,9 @@
 # ANYTHING THE BUILD NEEDS MUST NOT APPEAR BELOW. The build reads, in order:
 #   pyproject.toml, uv.lock (Dockerfile:36-37), README.md (:38, it is
 #   `readme` in pyproject and hatchling resolves it), then the whole tree via
-#   `COPY . /app/` (:44) -- src/ (the wheel package), ticketing_api.py,
-#   requirements.txt, init_db.sh, scripts/, docker-entrypoint-initdb.d/,
-#   .env.example. None of those are excluded here.
+#   `COPY . /app/` (:44) -- src/ (the wheel package), examples/, init_db.sh,
+#   scripts/, docker-entrypoint-initdb.d/, .env.example. None of those are
+#   excluded here.
 # The image does NOT run pytest (no test step in the Dockerfile), so tests/
 # is excluded deliberately.
 

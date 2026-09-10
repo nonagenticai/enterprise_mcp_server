@@ -40,8 +40,8 @@ For local development without Docker:
 # Install Node.js dependencies
 npm install -g @anthropic-ai/claude-code
 
-# Install Python dependencies (claude-code-sdk should be in requirements.txt)
-pip install claude-code-sdk
+# Install Python dependencies (claude-code-sdk is declared in pyproject.toml)
+uv sync
 
 # Verify installation
 claude --version

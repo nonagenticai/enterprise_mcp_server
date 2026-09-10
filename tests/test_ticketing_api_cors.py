@@ -1,4 +1,4 @@
-"""Regression barrier for ticketing_api's CORS configuration.
+"""Regression barrier for examples/ticketing_api.py's CORS configuration.
 
 WHY THIS FILE EXISTS. The fix it guards replaced `allow_origins=["*"]` (paired with
 `allow_credentials=True`) with an env-driven allow-list. That pairing is a real
@@ -31,10 +31,10 @@ ALLOWED = "http://allowed.example"
 
 
 def _reimport_with_env(monkeypatch: pytest.MonkeyPatch, value: str):
-    """Import ticketing_api fresh under a given CORS_ALLOWED_ORIGINS."""
+    """Import examples.ticketing_api fresh under a given CORS_ALLOWED_ORIGINS."""
     monkeypatch.setenv("CORS_ALLOWED_ORIGINS", value)
-    sys.modules.pop("ticketing_api", None)
-    return importlib.import_module("ticketing_api")
+    sys.modules.pop("examples.ticketing_api", None)
+    return importlib.import_module("examples.ticketing_api")
 
 
 def _cors_kwargs(app: FastAPI) -> dict:
