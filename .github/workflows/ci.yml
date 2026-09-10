@@ -56,9 +56,9 @@ jobs:
   # so nothing outside `tests/` is ever parsed. This job is the only thing that reads the rest.
   #
   # WHAT THIS ASSERTS: every file `git ls-files '*.py'` reports is syntactically valid
-  # Python under the interpreter this repo pins (3.12). Tracked-only and pattern-scoped, so
-  # `src/asgi.py.auth_fix`, `*.keycloak_bak*` and untracked scratch files stay out of scope,
-  # and `compileall` cannot silently widen it. It fails loudly if the file list comes back
+  # Python under the interpreter this repo pins (3.12). Tracked-only and pattern-scoped, so a
+  # file whose name does not end in `.py` (an editor backup such as `foo.py.bak`) and untracked
+  # scratch files stay out of scope, and `compileall` cannot silently widen it. It fails loudly if the file list comes back
   # EMPTY -- a gate that counts no sites cannot fail one.
   #
   # WHAT IT DOES *NOT* ASSERT: nothing about behaviour, imports, types, style or security.

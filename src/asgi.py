@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
 """
 ASGI adapter for using the Enterprise MCP server with Uvicorn.
 This creates a FastAPI app that integrates the Enterprise MCP Streamable HTTP functionality.
 """
-import sys
+
 import os
+import sys
 from pathlib import Path
 
 # Add the parent directory to sys.path
@@ -13,23 +13,19 @@ if parent_dir not in sys.path:
     sys.path.insert(0, parent_dir)
 
 import logging
-import asyncio
-from dotenv import load_dotenv
-from fastapi import FastAPI, Request, HTTPException, Depends
-from fastapi.middleware.cors import CORSMiddleware
-from .keycloak_auth.middleware import KeycloakAuthMiddleware
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 import secrets
 import time
-from uuid_v7.base import uuid7
-import httpx
-from starlette.routing import Mount
-from starlette.responses import Response, StreamingResponse
-from starlette.middleware.base import BaseHTTPMiddleware
-from typing import Dict, List, Optional, Any
-import inspect
 import traceback
+from typing import Any, ClassVar
+
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from starlette.middleware.base import BaseHTTPMiddleware
+
+from .keycloak_auth.middleware import KeycloakAuthMiddleware
 
 # Load environment variables
 load_dotenv()
@@ -63,7 +59,7 @@ uvicorn_access_logger.addFilter(HealthCheckLoggingFilter())
 class HealthCheckFilter(BaseHTTPMiddleware):
     """Middleware to prevent logging of health check endpoints."""
 
-    HEALTH_ENDPOINTS = {"/api/health", "/api/mcp-health"}
+    HEALTH_ENDPOINTS: ClassVar[set[str]] = {"/api/health", "/api/mcp-health"}
 
     async def dispatch(self, request: Request, call_next):
         # Check if this is a health check endpoint
@@ -78,21 +74,22 @@ class HealthCheckFilter(BaseHTTPMiddleware):
 
 # Import the MCP instance and necessary components from the server module
 # Using relative import for server_fastmcp
-from .server import (
-    mcp as global_mcp_instance,
-    lifespan_manager,  # Import lifespan manager for context
-)
+from .audit_api import router as audit_router
 
 # Import routers
 # Using relative imports for local API modules
 from .auth_api import router as auth_router
-from .audit_api import router as audit_router
-from .tool_management_api import router as tool_management_router
-from .tool_versions_api import router as tool_versions_router
 
 # Import dependency getters
 # Using relative import for dependencies
-from .dependencies import get_db, get_auth_service, get_audit_service, get_tool_registry
+from .server import (
+    lifespan_manager,  # Import lifespan manager for context
+)
+from .server import (
+    mcp as global_mcp_instance,
+)
+from .tool_management_api import router as tool_management_router
+from .tool_versions_api import router as tool_versions_router
 
 # Create a FastAPI app - Apply lifespan manager here
 app = FastAPI(
@@ -154,6 +151,7 @@ app.add_middleware(
 
 # Add Keycloak authentication middleware
 app.add_middleware(KeycloakAuthMiddleware)
+
 
 # Authentication models
 class TokenRequest(BaseModel):
@@ -232,7 +230,7 @@ async def root():
 
 
 @app.get("/api/health")
-async def health_check() -> Dict[str, str]:
+async def health_check() -> dict[str, str]:
     """Basic health check endpoint."""
     return {"status": "healthy", "version": "1.3.0"}
 
@@ -280,7 +278,7 @@ async def mcp_health():
             "tool_names": tool_names,
         }
     except Exception as e:
-        logger.error(f"Error checking Enterprise MCP health: {e}", exc_info=True)
+        logger.exception("Error checking Enterprise MCP health")
         return {"status": "unhealthy", "error": str(e)}
 
 
@@ -304,7 +302,7 @@ async def call_tool(tool_name: str, request: Request):
 
 # --- Make Tool Registry Available to All Endpoints ---
 @app.get("/api/available-tools")
-async def list_available_tools() -> Dict[str, Any]:
+async def list_available_tools() -> dict[str, Any]:
     """List all available tools and their descriptions."""
     try:
         # Enterprise Gateway Server: Return empty list of tools
@@ -313,7 +311,7 @@ async def list_available_tools() -> Dict[str, Any]:
             "message": "This server instance is a gateway and has no local operational tools.",
         }
     except Exception as e:
-        logger.error(f"Error listing available tools: {str(e)}")
+        logger.error(f"Error listing available tools: {e!s}")
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Failed to list available tools")
 
@@ -328,7 +326,9 @@ mcp_http_app = create_mcp_http_app(global_mcp_instance)
 # FastAPI routes defined above handle their specific paths.
 # The mounted app handles the /mcp endpoint for MCP protocol communication.
 app.mount("/mcp", mcp_http_app)
-logger.info("Mounted Enterprise MCP HTTP app at /mcp endpoint for Streamable HTTP transport")
+logger.info(
+    "Mounted Enterprise MCP HTTP app at /mcp endpoint for Streamable HTTP transport"
+)
 
 # --- Startup logic is handled by lifespan_manager in server.py ---
 # The deprecated @app.on_event("startup") has been removed in favor of
@@ -339,7 +339,7 @@ logger.info("Mounted Enterprise MCP HTTP app at /mcp endpoint for Streamable HTT
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """Global exception handler."""
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    logger.error(f"Unhandled exception: {exc}", exc_info=exc)
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal server error", "type": type(exc).__name__},
@@ -350,7 +350,7 @@ if __name__ == "__main__":
     import uvicorn
 
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", 8030))
+    port = int(os.getenv("PORT", "8030"))
 
     # Run the FastAPI app with Uvicorn
     uvicorn.run("src.asgi:app", host=host, port=port, log_level="info", reload=True)

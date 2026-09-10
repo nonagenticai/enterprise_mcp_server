@@ -1,11 +1,13 @@
-import logging
-from uuid_v7.base import uuid7
-from typing import Dict, Optional, Any, List
-from datetime import datetime, timedelta
-from fastapi import Request
-from .mcp_postgres_db import MCPPostgresDB
 import asyncio
+import logging
 import os
+from datetime import datetime, timedelta
+from typing import Any
+
+from fastapi import Request
+from uuid_v7.base import uuid7
+
+from .mcp_postgres_db import MCPPostgresDB
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +17,7 @@ AUDIT_RETENTION_DAYS = int(
     os.getenv("AUDIT_RETENTION_DAYS", DEFAULT_AUDIT_RETENTION_DAYS)
 )
 # Default cleanup interval (once a day)
-AUDIT_CLEANUP_INTERVAL_HOURS = int(os.getenv("AUDIT_CLEANUP_INTERVAL_HOURS", 24))
+AUDIT_CLEANUP_INTERVAL_HOURS = int(os.getenv("AUDIT_CLEANUP_INTERVAL_HOURS", "24"))
 
 
 class AuditLogService:
@@ -81,8 +83,8 @@ class AuditLogService:
                 except asyncio.CancelledError:
                     logger.info("Audit log cleanup task cancelled")
                     raise
-                except Exception as e:
-                    logger.error(f"Error in audit log cleanup task: {e}", exc_info=True)
+                except Exception:
+                    logger.exception("Error in audit log cleanup task")
                     # Sleep a shorter interval on error before retrying
                     await asyncio.sleep(900)  # 15 minutes
         except asyncio.CancelledError:
@@ -114,10 +116,8 @@ class AuditLogService:
                         except (ValueError, IndexError):
                             deleted_count = 0
                 return deleted_count
-        except Exception as e:
-            logger.error(
-                f"Error deleting audit logs before {cutoff_date}: {e}", exc_info=True
-            )
+        except Exception:
+            logger.exception(f"Error deleting audit logs before {cutoff_date}")
             return 0
 
     @classmethod
@@ -134,14 +134,14 @@ class AuditLogService:
 
     async def log_event(
         self,
-        actor_id: Optional[int],
+        actor_id: int | None,
         actor_type: str,
         action_type: str,
         resource_type: str,
-        resource_id: Optional[str],
+        resource_id: str | None,
         status: str,
-        details: Optional[Dict[str, Any]] = None,
-        request: Optional[Request] = None,
+        details: dict[str, Any] | None = None,
+        request: Request | None = None,
     ) -> int:
         """
         Log an audit event.
@@ -189,17 +189,17 @@ class AuditLogService:
 
     async def get_logs(
         self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        actor_id: Optional[int] = None,
-        actor_type: Optional[str] = None,
-        action_type: Optional[str] = None,
-        resource_type: Optional[str] = None,
-        resource_id: Optional[str] = None,
-        status: Optional[str] = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        actor_id: int | None = None,
+        actor_type: str | None = None,
+        action_type: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        status: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get audit logs with optional filtering.
 

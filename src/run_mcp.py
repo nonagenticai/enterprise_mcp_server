@@ -2,10 +2,11 @@
 """
 Run script for Enterprise MCP server.
 """
-import sys
-import os
+
 import asyncio
 import logging
+import os
+import sys
 from pathlib import Path
 
 # Add the parent directory to sys.path if running as a script
@@ -27,16 +28,16 @@ def main():
     load_dotenv()
 
     # Get the MCP instance
-    from src.server import mcp, register_builtin_tools
-
     # Print fastmcp version
     import fastmcp
+
+    from src.server import mcp
 
     print(f"Using FastMCP version: {fastmcp.__version__}")
 
     # Determine transport settings
     host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", 8030))
+    port = int(os.getenv("PORT", "8030"))
     log_level = os.getenv("LOG_LEVEL", "info").lower()
     transport_type = os.getenv("MCP_TRANSPORT", "http").lower()
 
@@ -53,8 +54,8 @@ def main():
     try:
         asyncio.run(init_gateway())
         logger.info("Gateway initialization completed")
-    except Exception as e:
-        logger.error(f"Error during gateway initialization: {e}", exc_info=True)
+    except Exception:
+        logger.exception("Error during gateway initialization")
         logger.warning("Continuing with server startup despite initialization error")
 
     if transport_type == "http":

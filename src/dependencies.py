@@ -1,14 +1,13 @@
-from typing import Any
-from fastapi import Depends, HTTPException, status, Request
-
-# Import the actual service classes and DB type
-from .audit import AuditLogService
-from .mcp_postgres_db import MCPPostgresDB
-
 # Import AuthService after its complete definition in auth.py
 # This import will happen at the end to avoid circular dependency
 # We want to keep the type hint but import it for runtime at a later point
 from typing import TYPE_CHECKING
+
+from fastapi import Request
+
+# Import the actual service classes and DB type
+from .audit import AuditLogService
+from .mcp_postgres_db import MCPPostgresDB
 
 if TYPE_CHECKING:
     from .auth import AuthService

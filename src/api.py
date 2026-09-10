@@ -3,15 +3,16 @@
 API server for Enterprise MCP with authentication, client registration, and administrative functions.
 This provides a REST API for managing the Enterprise MCP server.
 """
-import os
-import sys
-import json
-from uuid_v7.base import uuid7
+
 import logging
+import os
 import secrets
-from typing import Dict, List, Optional, Any, Union, Annotated
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Annotated, Any
+
+from uuid_v7.base import uuid7
 
 # Add parent directory to sys.path if running as a script
 if __name__ == "__main__":
@@ -20,21 +21,21 @@ if __name__ == "__main__":
         sys.path.insert(0, parent_dir)
 
 # FastAPI imports
-from fastapi import FastAPI, HTTPException, Depends, Request, status, Query, Form, Body
-from fastapi.responses import JSONResponse, RedirectResponse, HTMLResponse
+from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, Field
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.security import OAuth2PasswordRequestForm
+from pydantic import BaseModel
 
-# Local imports
-from .mcp_postgres_db import MCPPostgresDB
+from .audit import AuditLogService
 from .auth import (
     AuthService,
     get_current_user,
     requires_permission,
-    get_auth_service_direct,
 )
-from .audit import AuditLogService
+
+# Local imports
+from .mcp_postgres_db import MCPPostgresDB
 
 # Configure logging
 logging.basicConfig(
@@ -44,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 # --- Configuration ---
 HOST = os.getenv("API_HOST", "0.0.0.0")
-PORT = int(os.getenv("API_PORT", 8030))
+PORT = int(os.getenv("API_PORT", "8030"))
 CORS_ALLOWED_ORIGINS_STR = os.getenv(
     "CORS_ALLOWED_ORIGINS",
     "https://app.cursor.sh,https://cursor.sh,http://localhost:*,http://127.0.0.1:*",
@@ -70,22 +71,22 @@ app.add_middleware(
 )
 
 # --- Global variables for service instances ---
-_db_instance: Optional[MCPPostgresDB] = None
-_auth_service: Optional[AuthService] = None
-_audit_service: Optional[AuditLogService] = None
+_db_instance: MCPPostgresDB | None = None
+_auth_service: AuthService | None = None
+_audit_service: AuditLogService | None = None
 
 
 # --- Models ---
 class UserCreate(BaseModel):
     username: str
     password: str
-    roles: List[str] = []
+    roles: list[str] = []
 
 
 class UserResponse(BaseModel):
     id: int
     username: str
-    roles: List[str] = []
+    roles: list[str] = []
     is_active: bool = True
 
 
@@ -97,22 +98,22 @@ class Token(BaseModel):
 
 class ClientRegistration(BaseModel):
     client_name: str
-    redirect_uris: List[str]
-    client_uri: Optional[str] = None
-    logo_uri: Optional[str] = None
-    scope: Optional[str] = None
-    contacts: Optional[List[str]] = None
+    redirect_uris: list[str]
+    client_uri: str | None = None
+    logo_uri: str | None = None
+    scope: str | None = None
+    contacts: list[str] | None = None
 
 
 class ClientResponse(BaseModel):
     client_id: str
     client_secret: str
     client_name: str
-    redirect_uris: List[str]
-    client_uri: Optional[str] = None
-    logo_uri: Optional[str] = None
-    scope: Optional[str] = None
-    contacts: Optional[List[str]] = None
+    redirect_uris: list[str]
+    client_uri: str | None = None
+    logo_uri: str | None = None
+    scope: str | None = None
+    contacts: list[str] | None = None
     client_id_issued_at: int
     client_secret_expires_at: int
 
@@ -120,7 +121,6 @@ class ClientResponse(BaseModel):
 # --- Dependencies ---
 async def get_db() -> MCPPostgresDB:
     """Get database instance."""
-    global _db_instance
     if _db_instance is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -131,7 +131,6 @@ async def get_db() -> MCPPostgresDB:
 
 async def get_auth_service() -> AuthService:
     """Get authentication service instance."""
-    global _auth_service
     if _auth_service is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -142,7 +141,6 @@ async def get_auth_service() -> AuthService:
 
 async def get_audit_service() -> AuditLogService:
     """Get audit service instance."""
-    global _audit_service
     if _audit_service is None:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -163,22 +161,6 @@ async def root():
     }
 
 
-# --- Test Token Endpoint ---
-@app.get("/test-token")
-async def test_token(auth_service: Annotated[AuthService, Depends(get_auth_service)]):
-    """Generate a test token for SSE connection. For testing purposes only."""
-    # Create a basic test token with admin permissions
-    token_data = {"sub": "test", "id": 1, "scopes": ["*:*"]}
-    access_token = await auth_service.create_access_token(data=token_data)
-
-    return {
-        "access_token": access_token,
-        "token_type": "bearer",
-        "expires_in": 3600,
-        "message": "Use this token for testing SSE connections. Add it as a Bearer token in the Authorization header.",
-    }
-
-
 # --- Authentication endpoints ---
 @app.post("/auth/token", response_model=Token)
 async def login_for_access_token(
@@ -195,7 +177,7 @@ async def login_for_access_token(
         )
 
     # Create access token
-    expires_delta = timedelta(minutes=120)  # 2 hours
+    timedelta(minutes=120)  # 2 hours
     expires_in = 60 * 120  # 2 hours in seconds
 
     token_data = {"sub": user["username"], "id": user["id"]}
@@ -210,7 +192,7 @@ async def login_for_access_token(
 
 @app.get("/auth/me", response_model=dict)
 async def read_users_me(
-    current_user: Annotated[Dict[str, Any], Depends(get_current_user)],
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
 ):
     """Get current user information."""
     return current_user
@@ -223,7 +205,7 @@ async def create_user(
     db: Annotated[MCPPostgresDB, Depends(get_db)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("user:create"))
+        dict[str, Any], Depends(requires_permission("user:create"))
     ],
 ):
     """Create a new user."""
@@ -264,9 +246,9 @@ async def create_user(
     }
 
 
-@app.get("/users", response_model=List[UserResponse])
+@app.get("/users", response_model=list[UserResponse])
 async def list_users(
-    current_user: Annotated[Dict[str, Any], Depends(requires_permission("user:read"))],
+    current_user: Annotated[dict[str, Any], Depends(requires_permission("user:read"))],
     db: Annotated[MCPPostgresDB, Depends(get_db)],
 ):
     """List all users."""
@@ -301,7 +283,7 @@ async def list_users(
 async def register_client(
     client_data: ClientRegistration,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("oauth:register"))
+        dict[str, Any], Depends(requires_permission("oauth:register"))
     ],
     db: Annotated[MCPPostgresDB, Depends(get_db)],
 ):
@@ -339,15 +321,15 @@ async def register_client(
         logger.error(f"Error saving OAuth client: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error registering client: {str(e)}",
+            detail=f"Error registering client: {e!s}",
         )
 
     return client
 
 
-@app.get("/clients", response_model=List[dict])
+@app.get("/clients", response_model=list[dict])
 async def list_clients(
-    current_user: Annotated[Dict[str, Any], Depends(requires_permission("oauth:read"))],
+    current_user: Annotated[dict[str, Any], Depends(requires_permission("oauth:read"))],
     db: Annotated[MCPPostgresDB, Depends(get_db)],
 ):
     """List all OAuth clients."""
@@ -373,7 +355,7 @@ async def list_clients(
         logger.error(f"Error listing OAuth clients: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error listing clients: {str(e)}",
+            detail=f"Error listing clients: {e!s}",
         )
 
 
@@ -449,10 +431,8 @@ async def authorize(
     response_type: str = Query(
         "code", description="OAuth response type, must be 'code'"
     ),
-    state: Optional[str] = Query(
-        None, description="State parameter for CSRF protection"
-    ),
-    scope: Optional[str] = Query(
+    state: str | None = Query(None, description="State parameter for CSRF protection"),
+    scope: str | None = Query(
         None, description="Space-separated list of requested scopes"
     ),
     code_challenge_method: str = Query(
@@ -495,8 +475,8 @@ async def authorize(
             <form action="/authorize/confirm" method="post">
                 <input type="hidden" name="client_id" value="{client_id}">
                 <input type="hidden" name="redirect_uri" value="{redirect_uri}">
-                <input type="hidden" name="state" value="{state or ''}">
-                <input type="hidden" name="scope" value="{scope or ''}">
+                <input type="hidden" name="state" value="{state or ""}">
+                <input type="hidden" name="scope" value="{scope or ""}">
                 <input type="hidden" name="code_challenge" value="{code_challenge}">
                 <input type="hidden" name="code_challenge_method" value="{code_challenge_method}">
                 
@@ -523,8 +503,8 @@ async def authorize_confirm(
     redirect_uri: str = Form(...),
     code_challenge: str = Form(...),
     code_challenge_method: str = Form("S256"),
-    state: Optional[str] = Form(None),
-    scope: Optional[str] = Form(None),
+    state: str | None = Form(None),
+    scope: str | None = Form(None),
 ):
     """Confirm OAuth 2.0 authorization."""
     # Get dependencies
@@ -541,7 +521,7 @@ async def authorize_confirm(
             <head><title>Authentication Failed</title></head>
             <body>
                 <h1>Authentication Failed</h1>
-                <p>Invalid username or password. <a href="/authorize?client_id={client_id}&redirect_uri={redirect_uri}&state={state or ''}&scope={scope or ''}&code_challenge={code_challenge}&code_challenge_method={code_challenge_method}">Try again</a></p>
+                <p>Invalid username or password. <a href="/authorize?client_id={client_id}&redirect_uri={redirect_uri}&state={state or ""}&scope={scope or ""}&code_challenge={code_challenge}&code_challenge_method={code_challenge_method}">Try again</a></p>
             </body>
         </html>
         """
@@ -668,8 +648,8 @@ async def token(request: Request, db: Annotated[MCPPostgresDB, Depends(get_db)])
                 )
 
             # Verify PKCE
-            import hashlib
             import base64
+            import hashlib
 
             stored_challenge = auth_code_data.get("code_challenge")
             stored_method = auth_code_data.get("code_challenge_method")

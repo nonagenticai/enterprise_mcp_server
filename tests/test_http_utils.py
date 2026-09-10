@@ -21,9 +21,8 @@ Measured against fastmcp 3.4.2, which this repo pins:
 """
 
 import pytest
-from starlette.applications import Starlette
-
 from fastmcp import FastMCP
+from starlette.applications import Starlette
 
 from src.http_utils import create_mcp_http_app
 
@@ -47,7 +46,10 @@ def test_mounts_at_the_default_mcp_path(mcp: FastMCP) -> None:
 
 def test_honours_a_custom_path(mcp: FastMCP) -> None:
     """The `path` argument must actually reach fastmcp rather than being ignored."""
-    paths = {getattr(route, "path", None) for route in create_mcp_http_app(mcp, path="/custom").routes}
+    paths = {
+        getattr(route, "path", None)
+        for route in create_mcp_http_app(mcp, path="/custom").routes
+    }
     assert "/custom" in paths
     assert "/mcp" not in paths
 
@@ -66,8 +68,13 @@ def test_uses_streamable_http_transport_and_not_sse(mcp: FastMCP) -> None:
     assertion would also pass if fastmcp stopped registering `/messages` for every transport,
     i.e. the test could go vacuously green while verifying nothing.
     """
-    streamable_paths = {getattr(r, "path", None) for r in create_mcp_http_app(mcp).routes}
-    sse_paths = {getattr(r, "path", None) for r in mcp.http_app(path="/mcp", transport="sse").routes}
+    streamable_paths = {
+        getattr(r, "path", None) for r in create_mcp_http_app(mcp).routes
+    }
+    sse_paths = {
+        getattr(r, "path", None)
+        for r in mcp.http_app(path="/mcp", transport="sse").routes
+    }
 
     assert "/messages" not in streamable_paths, (
         "create_mcp_http_app produced an SSE-shaped app; the transport argument regressed"

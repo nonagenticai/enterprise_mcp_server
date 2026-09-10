@@ -1,10 +1,12 @@
 import logging
-from typing import Dict, Optional, List, Any, Annotated
-from fastapi import APIRouter, Depends, HTTPException, status, Query, Request
-from pydantic import BaseModel, Field
 from datetime import datetime
-from .auth import get_current_user, requires_permission
+from typing import Annotated, Any
+
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
+
 from .audit import AuditLogService
+from .auth import requires_permission
 from .dependencies import get_audit_service
 
 logger = logging.getLogger(__name__)
@@ -14,15 +16,15 @@ logger = logging.getLogger(__name__)
 class AuditLogResponse(BaseModel):
     id: int
     timestamp: datetime
-    actor_id: Optional[int] = None
+    actor_id: int | None = None
     actor_type: str
     action_type: str
     resource_type: str
-    resource_id: Optional[str] = None
+    resource_id: str | None = None
     status: str
-    details: Optional[Dict[str, Any]] = None
-    request_id: Optional[str] = None
-    ip_address: Optional[str] = None
+    details: dict[str, Any] | None = None
+    request_id: str | None = None
+    ip_address: str | None = None
 
 
 # Create the router
@@ -36,19 +38,19 @@ router = APIRouter(
 
 
 # API Endpoints
-@router.get("/logs", response_model=List[AuditLogResponse])
+@router.get("/logs", response_model=list[AuditLogResponse])
 async def get_audit_logs(
-    current_user: Annotated[Dict[str, Any], Depends(requires_permission("log:read"))],
+    current_user: Annotated[dict[str, Any], Depends(requires_permission("log:read"))],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
     request: Request = None,
-    start_time: Optional[datetime] = None,
-    end_time: Optional[datetime] = None,
-    actor_id: Optional[int] = None,
-    actor_type: Optional[str] = None,
-    action_type: Optional[str] = None,
-    resource_type: Optional[str] = None,
-    resource_id: Optional[str] = None,
-    status: Optional[str] = None,
+    start_time: datetime | None = None,
+    end_time: datetime | None = None,
+    actor_id: int | None = None,
+    actor_type: str | None = None,
+    action_type: str | None = None,
+    resource_type: str | None = None,
+    resource_id: str | None = None,
+    status: str | None = None,
     limit: int = Query(100, le=1000),
     offset: int = Query(0, ge=0),
 ):
