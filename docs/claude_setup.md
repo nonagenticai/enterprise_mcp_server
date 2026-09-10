@@ -153,7 +153,7 @@ CLAUDE_API_KEY=your-api-key-here
 response = await claude_code(
     prompt="Create a Python function to calculate fibonacci numbers",
     allowed_tools=["Write"],
-    permission_mode="acceptEdits"
+    permission_mode="acceptEdits",
 )
 ```
 
@@ -164,7 +164,7 @@ response = await claude_code(
     prompt="Analyze this codebase for security vulnerabilities",
     path="/app/src",
     allowed_tools=["Read", "Grep"],
-    permission_mode="plan"
+    permission_mode="plan",
 )
 ```
 
@@ -176,7 +176,7 @@ response = await claude_code(
     system_prompt="You are an expert Python developer",
     allowed_tools=["Read", "Write", "Bash"],
     permission_mode="acceptEdits",
-    max_turns=5
+    max_turns=5,
 )
 ```
 

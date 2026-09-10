@@ -46,7 +46,7 @@ uv sync
 Bring up the backing services (PostgreSQL + Redis) for local work:
 
 ```bash
-docker compose up -d postgres redis
+docker compose up -d db redis
 ```
 
 For the full stack (gateway + server + Postgres + Redis), and for the Claude-integration
@@ -61,7 +61,7 @@ uv run pytest
 ```
 
 Tests that touch the database expect a running PostgreSQL (start it with `docker compose
-up -d postgres` as above). Make sure the suite is green before you push.
+up -d db` as above). Make sure the suite is green before you push.
 
 ## Lint and formatting
 
@@ -75,8 +75,10 @@ uv run ruff check .
 uv run ruff format --check .
 ```
 
-There is no CI gate on this repository yet, so running these locally before opening a PR
-is what keeps `main` clean — please don't skip it.
+CI runs on every push and pull request (`.github/workflows/ci.yml`) with three jobs:
+`smoke` (dependency resolve + import check), `tests` (`uv sync --locked` + pytest) and
+`compile` (parses every tracked Python file). Running lint locally before opening a PR
+still saves you a round trip — CI does not currently gate on ruff.
 
 ## Branch naming
 
@@ -100,8 +102,8 @@ Use a short prefix that describes the kind of change:
 1. Link the related issue if one exists (`Fixes #N`).
 2. Describe what changed and why — give reviewers enough context to evaluate the change
    without reverse-engineering it from the diff.
-3. Run the tests and lint locally before requesting review (there's no CI to catch a red
-   build for you).
+3. Run the tests and lint locally before requesting review — CI runs `smoke`, `tests` and
+   `compile`, but not ruff, so lint regressions are only caught locally.
 4. Request review from a maintainer once the PR is ready. Mark drafts as draft.
 5. Be responsive to review feedback. Push fix-up commits and squash-merge at the end.
 
