@@ -1,20 +1,20 @@
-import logging
-from uuid import UUID
-from uuid_v7.base import uuid7
-import json
 import asyncio
+import json
+import logging
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Optional, Any, Union
-from datetime import datetime, timezone, timedelta
-from urllib.parse import quote_plus
 import secrets
+from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
+from typing import Any
+from urllib.parse import quote_plus
+from uuid import UUID
 
 from psycopg import AsyncConnection, OperationalError, sql
 from psycopg.errors import DuplicateDatabase, InvalidCatalogName, UniqueViolation
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
+from uuid_v7.base import uuid7
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -74,8 +74,8 @@ class MCPPostgresDB:
             f"Connection parameters: user={DB_USER}, pool_size={DB_POOL_MIN_SIZE}-{DB_POOL_MAX_SIZE}"
         )
 
-        pool: Optional[DictRowPool] = None
-        last_error: Optional[Exception] = None
+        pool: DictRowPool | None = None
+        last_error: Exception | None = None
         current_delay = retry_delay
 
         for attempt in range(1, max_retries + 1):
@@ -126,9 +126,8 @@ class MCPPostgresDB:
                     break  # Success! Exit retry loop
 
                 except Exception as create_err:
-                    logger.error(
-                        f"Failed to create database or reconnect (attempt {attempt}/{max_retries}): {create_err}",
-                        exc_info=True,
+                    logger.exception(
+                        f"Failed to create database or reconnect (attempt {attempt}/{max_retries})"
                     )
                     last_error = create_err
 
@@ -137,7 +136,12 @@ class MCPPostgresDB:
                         await asyncio.sleep(current_delay)
                         current_delay *= 2  # Exponential backoff
 
-            except (OperationalError, OSError, ConnectionRefusedError, asyncio.TimeoutError) as e:
+            except (
+                TimeoutError,
+                OperationalError,
+                OSError,
+                ConnectionRefusedError,
+            ) as e:
                 # Network/connection errors - retry with backoff
                 logger.warning(
                     f"Connection failed (attempt {attempt}/{max_retries}): {type(e).__name__}: {e}"
@@ -151,9 +155,8 @@ class MCPPostgresDB:
 
             except Exception as e:
                 # Unexpected error
-                logger.error(
-                    f"Unexpected error during connection (attempt {attempt}/{max_retries}): {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Unexpected error during connection (attempt {attempt}/{max_retries})"
                 )
                 last_error = e
 
@@ -179,7 +182,7 @@ class MCPPostgresDB:
                 await cls._create_tables(conn)
             logger.info("Database initialization completed successfully")
         except Exception as e:
-            logger.error(f"Failed during initial table creation: {e}", exc_info=True)
+            logger.exception("Failed during initial table creation")
             try:
                 await pool.close()
             except Exception:
@@ -471,15 +474,13 @@ class MCPPostgresDB:
                 f"Database name '{DB_NAME}' contains invalid characters; only alphanumeric and underscore are supported."
             )
 
-        admin_conninfo = (
-            f"postgresql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_ADMIN_DB}"
-        )
+        admin_conninfo = f"postgresql://{quote_plus(DB_USER)}:{quote_plus(DB_PASSWORD)}@{DB_HOST}:{DB_PORT}/{DB_ADMIN_DB}"
         logger.info(
             f"Ensuring PostgreSQL database '{DB_NAME}' exists using admin database '{DB_ADMIN_DB}' "
             f"at {DB_HOST}:{DB_PORT}"
         )
 
-        conn: Optional[AsyncConnection] = None
+        conn: AsyncConnection | None = None
         last_error = None
 
         for attempt in range(1, max_retries + 1):
@@ -520,14 +521,16 @@ class MCPPostgresDB:
                     )
                     return
 
-                except Exception as create_err:
-                    logger.error(
-                        f"Error creating database '{DB_NAME}': {create_err}",
-                        exc_info=True,
-                    )
+                except Exception:
+                    logger.exception(f"Error creating database '{DB_NAME}'")
                     raise
 
-            except (OperationalError, OSError, ConnectionRefusedError, asyncio.TimeoutError) as e:
+            except (
+                TimeoutError,
+                OperationalError,
+                OSError,
+                ConnectionRefusedError,
+            ) as e:
                 logger.warning(
                     f"Failed to connect to admin database (attempt {attempt}/{max_retries}): {type(e).__name__}: {e}"
                 )
@@ -538,10 +541,8 @@ class MCPPostgresDB:
                     logger.info(f"Waiting {retry_delay}s before retry...")
                     await asyncio.sleep(retry_delay)
 
-            except Exception as e:
-                logger.error(
-                    f"Unexpected error ensuring database exists: {e}", exc_info=True
-                )
+            except Exception:
+                logger.exception("Unexpected error ensuring database exists")
                 raise
 
             finally:
@@ -566,7 +567,7 @@ class MCPPostgresDB:
         name: str,
         description: str,
         code: str,
-        created_by: Optional[int] = None,
+        created_by: int | None = None,
         replace_existing: bool = False,
     ) -> str:
         """Add a new single-file tool definition to the database or replace if specified."""
@@ -574,63 +575,62 @@ class MCPPostgresDB:
         tool_uuid = uuid7()
         tool_uuid_str = str(tool_uuid)
 
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                # Check if exists
-                cur = await conn.execute(
-                    """
+        async with self.pool.connection() as conn, conn.transaction():
+            # Check if exists
+            cur = await conn.execute(
+                """
                     SELECT tool_id FROM mcp_tools WHERE name = %s
                 """,
-                    (name,),
+                (name,),
+            )
+            existing = await cur.fetchone()
+
+            if existing and not replace_existing:
+                raise ValueError(f"Tool with name '{name}' already exists.")
+
+            if existing and replace_existing:
+                # Delete existing versions and files associated with the old UUID before replacing
+                old_tool_uuid = existing["tool_id"]
+                logger.warning(
+                    f"Replacing existing tool '{name}' (UUID: {old_tool_uuid}). Associated versions and files will be deleted."
                 )
-                existing = await cur.fetchone()
-
-                if existing and not replace_existing:
-                    raise ValueError(f"Tool with name '{name}' already exists.")
-
-                if existing and replace_existing:
-                    # Delete existing versions and files associated with the old UUID before replacing
-                    old_tool_uuid = existing["tool_id"]
-                    logger.warning(
-                        f"Replacing existing tool '{name}' (UUID: {old_tool_uuid}). Associated versions and files will be deleted."
-                    )
-                    await conn.execute(
-                        """
-                        DELETE FROM mcp_tool_versions WHERE tool_id = %s
-                    """,
-                        (old_tool_uuid,),
-                    )
-                    await conn.execute(
-                        """
-                        DELETE FROM mcp_tool_files WHERE tool_id = %s
-                    """,
-                        (old_tool_uuid,),
-                    )
-                    # Delete the main tool entry
-                    await conn.execute(
-                        """
-                        DELETE FROM mcp_tools WHERE tool_id = %s
-                    """,
-                        (old_tool_uuid,),
-                    )
-
-                # Insert new tool
                 await conn.execute(
                     """
+                        DELETE FROM mcp_tool_versions WHERE tool_id = %s
+                    """,
+                    (old_tool_uuid,),
+                )
+                await conn.execute(
+                    """
+                        DELETE FROM mcp_tool_files WHERE tool_id = %s
+                    """,
+                    (old_tool_uuid,),
+                )
+                # Delete the main tool entry
+                await conn.execute(
+                    """
+                        DELETE FROM mcp_tools WHERE tool_id = %s
+                    """,
+                    (old_tool_uuid,),
+                )
+
+            # Insert new tool
+            await conn.execute(
+                """
                     INSERT INTO mcp_tools (tool_id, name, description, code, is_multi_file, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, FALSE, %s, %s)
                 """,
-                    (tool_uuid, name, description, code, now, now),
-                )
+                (tool_uuid, name, description, code, now, now),
+            )
 
-                # Add the first version automatically
-                await conn.execute(
-                    """
+            # Add the first version automatically
+            await conn.execute(
+                """
                     INSERT INTO mcp_tool_versions (tool_id, version_number, code, created_at, created_by, description)
                     VALUES (%s, 1, %s, %s, %s, %s)
                 """,
-                    (tool_uuid, code, now, created_by, description),
-                )
+                (tool_uuid, code, now, created_by, description),
+            )
 
         logger.info(f"Created tool {tool_uuid_str} with name: {name}")
         return tool_uuid_str
@@ -640,9 +640,9 @@ class MCPPostgresDB:
         name: str,
         description: str,
         entrypoint: str,
-        files: Dict[str, str],
-        created_by: Optional[int] = None,
-        tool_dir_uuid: Optional[str] = None,
+        files: dict[str, str],
+        created_by: int | None = None,
+        tool_dir_uuid: str | None = None,
         replace_existing: bool = False,
     ) -> str:
         """Add a new multi-file tool definition to the database or replace if specified."""
@@ -653,71 +653,70 @@ class MCPPostgresDB:
         if not entrypoint or entrypoint not in files:
             raise ValueError("Entrypoint file must be present in the files dictionary")
 
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                # Check if exists
-                cur = await conn.execute(
-                    """
+        async with self.pool.connection() as conn, conn.transaction():
+            # Check if exists
+            cur = await conn.execute(
+                """
                     SELECT tool_id FROM mcp_tools WHERE name = %s
                 """,
-                    (name,),
+                (name,),
+            )
+            existing = await cur.fetchone()
+
+            if existing and not replace_existing:
+                raise ValueError(f"Tool with name '{name}' already exists.")
+
+            if existing and replace_existing:
+                old_tool_uuid = existing["tool_id"]
+                logger.warning(
+                    f"Replacing existing multi-file tool '{name}' (UUID: {old_tool_uuid}). Associated versions and files will be deleted."
                 )
-                existing = await cur.fetchone()
-
-                if existing and not replace_existing:
-                    raise ValueError(f"Tool with name '{name}' already exists.")
-
-                if existing and replace_existing:
-                    old_tool_uuid = existing["tool_id"]
-                    logger.warning(
-                        f"Replacing existing multi-file tool '{name}' (UUID: {old_tool_uuid}). Associated versions and files will be deleted."
-                    )
-                    await conn.execute(
-                        """
-                        DELETE FROM mcp_tool_versions WHERE tool_id = %s
-                    """,
-                        (old_tool_uuid,),
-                    )
-                    await conn.execute(
-                        """
-                        DELETE FROM mcp_tool_files WHERE tool_id = %s
-                    """,
-                        (old_tool_uuid,),
-                    )
-                    await conn.execute(
-                        """
-                        DELETE FROM mcp_tools WHERE tool_id = %s
-                    """,
-                        (old_tool_uuid,),
-                    )
-
-                # Insert main tool entry (code field stores entrypoint filename)
                 await conn.execute(
                     """
+                        DELETE FROM mcp_tool_versions WHERE tool_id = %s
+                    """,
+                    (old_tool_uuid,),
+                )
+                await conn.execute(
+                    """
+                        DELETE FROM mcp_tool_files WHERE tool_id = %s
+                    """,
+                    (old_tool_uuid,),
+                )
+                await conn.execute(
+                    """
+                        DELETE FROM mcp_tools WHERE tool_id = %s
+                    """,
+                    (old_tool_uuid,),
+                )
+
+            # Insert main tool entry (code field stores entrypoint filename)
+            await conn.execute(
+                """
                     INSERT INTO mcp_tools (tool_id, name, description, code, is_multi_file, created_at, updated_at)
                     VALUES (%s, %s, %s, %s, TRUE, %s, %s)
                 """,
-                    (tool_uuid, name, description, entrypoint, now, now),
-                )
+                (tool_uuid, name, description, entrypoint, now, now),
+            )
 
-                # Insert files
-                for filename, content in files.items():
-                    await conn.execute(
-                        """
+            # Insert files
+            for filename, content in files.items():
+                await conn.execute(
+                    """
                         INSERT INTO mcp_tool_files (tool_id, filename, content, created_at, updated_at)
                         VALUES (%s, %s, %s, %s, %s)
                     """,
-                        (tool_uuid, filename, content, now, now),
-                    )
+                    (tool_uuid, filename, content, now, now),
+                )
 
-                # Add the first version automatically (points to the initial set of files)
-                await conn.execute(
-                    """
+            # Add the first version automatically (points to the initial set of files)
+            await conn.execute(
+                """
                     INSERT INTO mcp_tool_versions (tool_id, version_number, code, created_at, created_by, description)
                     VALUES (%s, 1, %s, %s, %s, %s)
                 """,
-                    (tool_uuid, entrypoint, now, created_by, description),
-                )
+                (tool_uuid, entrypoint, now, created_by, description),
+            )
 
         logger.info(f"Created multi-file tool {tool_uuid_str} with name: {name}")
         return tool_uuid_str
@@ -791,7 +790,7 @@ class MCPPostgresDB:
         return True
 
     async def update_multi_file_tool(
-        self, name: str, description: str, entrypoint: str, files: Dict[str, str]
+        self, name: str, description: str, entrypoint: str, files: dict[str, str]
     ) -> bool:
         """Update an existing multi-file tool in the database."""
         now = self._get_timestamp()
@@ -882,36 +881,35 @@ class MCPPostgresDB:
 
     async def delete_tool(self, name: str) -> bool:
         """Delete a tool from the database."""
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                # First get the tool_id
-                cur = await conn.execute(
-                    """
+        async with self.pool.connection() as conn, conn.transaction():
+            # First get the tool_id
+            cur = await conn.execute(
+                """
                     SELECT tool_id FROM mcp_tools
                     WHERE name = %s
                 """,
-                    (name,),
-                )
-                row = await cur.fetchone()
-                tool_id = row["tool_id"] if row else None
+                (name,),
+            )
+            row = await cur.fetchone()
+            tool_id = row["tool_id"] if row else None
 
-                if not tool_id:
-                    logger.warning(f"Tool {name} not found, cannot delete")
-                    return False
+            if not tool_id:
+                logger.warning(f"Tool {name} not found, cannot delete")
+                return False
 
-                # The ON DELETE CASCADE will handle deleting related records in mcp_tool_files and mcp_tool_versions
-                await conn.execute(
-                    """
+            # The ON DELETE CASCADE will handle deleting related records in mcp_tool_files and mcp_tool_versions
+            await conn.execute(
+                """
                     DELETE FROM mcp_tools
                     WHERE tool_id = %s
                 """,
-                    (tool_id,),
-                )
+                (tool_id,),
+            )
 
         logger.info(f"Deleted tool: {name}")
         return True
 
-    async def get_tool_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_tool_by_name(self, name: str) -> dict[str, Any] | None:
         """Get a tool by its name."""
         async with self.pool.connection() as conn:
             # Get tool record
@@ -936,7 +934,7 @@ class MCPPostgresDB:
 
             return tool_dict
 
-    async def get_tool_files(self, tool_id: str) -> Dict[str, str]:
+    async def get_tool_files(self, tool_id: str) -> dict[str, str]:
         """Get all files for a multi-file tool."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -950,7 +948,7 @@ class MCPPostgresDB:
 
             return {row["filename"]: row["content"] for row in rows}
 
-    async def get_all_tools(self) -> List[Dict[str, Any]]:
+    async def get_all_tools(self) -> list[dict[str, Any]]:
         """Get all tools from the database."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -971,9 +969,7 @@ class MCPPostgresDB:
 
             return tools
 
-    async def get_tool_versions(
-        self, tool_id: Union[str, UUID]
-    ) -> List[Dict[str, Any]]:
+    async def get_tool_versions(self, tool_id: str | UUID) -> list[dict[str, Any]]:
         """Get all versions for a specific tool."""
         tool_uuid_obj = UUID(tool_id) if isinstance(tool_id, str) else tool_id
         async with self.pool.connection() as conn:
@@ -988,85 +984,84 @@ class MCPPostgresDB:
 
     async def add_tool_version(
         self,
-        tool_id: Union[int, UUID],  # Accept SERIAL ID or UUID
+        tool_id: int | UUID,  # Accept SERIAL ID or UUID
         code: str,
-        created_by: Optional[int] = None,  # Add creator ID
-        description: Optional[str] = None,  # Allow storing description with version
-    ) -> Dict[str, Any]:
+        created_by: int | None = None,  # Add creator ID
+        description: str | None = None,  # Allow storing description with version
+    ) -> dict[str, Any]:
         """Add a new version for a single-file tool."""
         now = self._get_timestamp()
         tool_uuid = None
 
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                # Find the tool UUID if given the SERIAL ID
-                if isinstance(tool_id, int):
-                    cur = await conn.execute(
-                        """
+        async with self.pool.connection() as conn, conn.transaction():
+            # Find the tool UUID if given the SERIAL ID
+            if isinstance(tool_id, int):
+                cur = await conn.execute(
+                    """
                         SELECT tool_id FROM mcp_tools WHERE id = %s
                     """,
-                        (tool_id,),
-                    )
-                    tool_record = await cur.fetchone()
-                    if not tool_record:
-                        raise ValueError(f"Tool with internal ID {tool_id} not found.")
-                    tool_uuid = tool_record["tool_id"]
-                elif isinstance(tool_id, UUID):
-                    tool_uuid = tool_id
-                    # Verify UUID exists
-                    cur = await conn.execute(
-                        """
+                    (tool_id,),
+                )
+                tool_record = await cur.fetchone()
+                if not tool_record:
+                    raise ValueError(f"Tool with internal ID {tool_id} not found.")
+                tool_uuid = tool_record["tool_id"]
+            elif isinstance(tool_id, UUID):
+                tool_uuid = tool_id
+                # Verify UUID exists
+                cur = await conn.execute(
+                    """
                         SELECT id FROM mcp_tools WHERE tool_id = %s
                     """,
-                        (tool_uuid,),
-                    )
-                    tool_record = await cur.fetchone()
-                    if not tool_record:
-                        raise ValueError(f"Tool with UUID {tool_id} not found.")
-                else:
-                    raise TypeError("tool_id must be an int (serial ID) or UUID")
+                    (tool_uuid,),
+                )
+                tool_record = await cur.fetchone()
+                if not tool_record:
+                    raise ValueError(f"Tool with UUID {tool_id} not found.")
+            else:
+                raise TypeError("tool_id must be an int (serial ID) or UUID")
 
-                # Check if it's a multi-file tool (versioning handled differently)
-                cur = await conn.execute(
-                    """
+            # Check if it's a multi-file tool (versioning handled differently)
+            cur = await conn.execute(
+                """
                     SELECT is_multi_file FROM mcp_tools WHERE tool_id = %s
                 """,
-                    (tool_uuid,),
+                (tool_uuid,),
+            )
+            row = await cur.fetchone()
+            is_multi = row["is_multi_file"] if row else False
+            if is_multi:
+                raise ValueError(
+                    "Versioning via add_tool_version is only supported for single-file tools."
                 )
-                row = await cur.fetchone()
-                is_multi = row["is_multi_file"] if row else False
-                if is_multi:
-                    raise ValueError(
-                        "Versioning via add_tool_version is only supported for single-file tools."
-                    )
 
-                # Get the next version number
-                cur = await conn.execute(
-                    """
+            # Get the next version number
+            cur = await conn.execute(
+                """
                     SELECT MAX(version_number) AS max_ver FROM mcp_tool_versions WHERE tool_id = %s
                 """,
-                    (tool_uuid,),
-                )
-                row = await cur.fetchone()
-                max_version = row["max_ver"] if row and row["max_ver"] else 0
-                next_version = max_version + 1
+                (tool_uuid,),
+            )
+            row = await cur.fetchone()
+            max_version = row["max_ver"] if row and row["max_ver"] else 0
+            next_version = max_version + 1
 
-                # Insert the new version
-                await conn.execute(
-                    """
+            # Insert the new version
+            await conn.execute(
+                """
                     INSERT INTO mcp_tool_versions (tool_id, version_number, code, created_at, created_by, description)
                     VALUES (%s, %s, %s, %s, %s, %s)
                 """,
-                    (tool_uuid, next_version, code, now, created_by, description),
-                )
+                (tool_uuid, next_version, code, now, created_by, description),
+            )
 
-                # Update the main tool record's code and updated_at timestamp
-                await conn.execute(
-                    """
+            # Update the main tool record's code and updated_at timestamp
+            await conn.execute(
+                """
                     UPDATE mcp_tools SET code = %s, updated_at = %s WHERE tool_id = %s
                 """,
-                    (code, now, tool_uuid),
-                )
+                (code, now, tool_uuid),
+            )
 
         return {
             "tool_id": str(tool_uuid),
@@ -1077,65 +1072,64 @@ class MCPPostgresDB:
         }
 
     async def restore_tool_version(
-        self, tool_id: Union[str, UUID], version_number: int
+        self, tool_id: str | UUID, version_number: int
     ) -> bool:
         """Restore a specific version of a single-file tool."""
         now = self._get_timestamp()
         tool_uuid_obj = UUID(tool_id) if isinstance(tool_id, str) else tool_id
 
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                # Check if it's a multi-file tool
-                cur = await conn.execute(
-                    """
+        async with self.pool.connection() as conn, conn.transaction():
+            # Check if it's a multi-file tool
+            cur = await conn.execute(
+                """
                     SELECT is_multi_file FROM mcp_tools WHERE tool_id = %s
                 """,
-                    (tool_uuid_obj,),
+                (tool_uuid_obj,),
+            )
+            row = await cur.fetchone()
+            is_multi = row["is_multi_file"] if row else False
+            if is_multi:
+                raise ValueError(
+                    "Restoring versions is only supported for single-file tools."
                 )
-                row = await cur.fetchone()
-                is_multi = row["is_multi_file"] if row else False
-                if is_multi:
-                    raise ValueError(
-                        "Restoring versions is only supported for single-file tools."
-                    )
 
-                # Get the code from the specified version
-                cur = await conn.execute(
-                    """
+            # Get the code from the specified version
+            cur = await conn.execute(
+                """
                     SELECT code FROM mcp_tool_versions WHERE tool_id = %s AND version_number = %s
                 """,
-                    (tool_uuid_obj, version_number),
+                (tool_uuid_obj, version_number),
+            )
+            version_data = await cur.fetchone()
+
+            if not version_data:
+                raise ValueError(
+                    f"Version {version_number} not found for tool {tool_id}"
                 )
-                version_data = await cur.fetchone()
 
-                if not version_data:
-                    raise ValueError(
-                        f"Version {version_number} not found for tool {tool_id}"
-                    )
+            restored_code = version_data["code"]
 
-                restored_code = version_data["code"]
-
-                # Update the main tool record
-                cur = await conn.execute(
-                    """
+            # Update the main tool record
+            cur = await conn.execute(
+                """
                     UPDATE mcp_tools SET code = %s, updated_at = %s WHERE tool_id = %s
                 """,
-                    (restored_code, now, tool_uuid_obj),
-                )
+                (restored_code, now, tool_uuid_obj),
+            )
 
-                return cur.rowcount == 1
+            return cur.rowcount == 1
 
     async def log_audit_event(
         self,
-        actor_id: Optional[int],
+        actor_id: int | None,
         actor_type: str,
         action_type: str,
         resource_type: str,
-        resource_id: Optional[str],
+        resource_id: str | None,
         status: str,
-        details: Dict[str, Any] = None,
-        request_id: Optional[str] = None,
-        ip_address: Optional[str] = None,
+        details: dict[str, Any] | None = None,
+        request_id: str | None = None,
+        ip_address: str | None = None,
     ) -> int:
         """Log an audit event to the database."""
         now = self._get_timestamp()
@@ -1171,20 +1165,20 @@ class MCPPostgresDB:
 
     async def get_audit_logs(
         self,
-        start_time: Optional[datetime] = None,
-        end_time: Optional[datetime] = None,
-        actor_id: Optional[int] = None,
-        actor_type: Optional[str] = None,
-        action_type: Optional[str] = None,
-        resource_type: Optional[str] = None,
-        resource_id: Optional[str] = None,
-        status: Optional[str] = None,
+        start_time: datetime | None = None,
+        end_time: datetime | None = None,
+        actor_id: int | None = None,
+        actor_type: str | None = None,
+        action_type: str | None = None,
+        resource_type: str | None = None,
+        resource_id: str | None = None,
+        status: str | None = None,
         limit: int = 100,
         offset: int = 0,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Get audit logs with optional filtering."""
         query_parts = ["SELECT * FROM audit_logs WHERE 1=1"]
-        params: List[Any] = []
+        params: list[Any] = []
 
         if start_time:
             query_parts.append("AND timestamp >= %s")
@@ -1244,9 +1238,9 @@ class MCPPostgresDB:
     async def create_user(
         self,
         username: str,
-        password_hash: Optional[str] = None,
-        api_key_hash: Optional[str] = None,
-        email: Optional[str] = None,
+        password_hash: str | None = None,
+        api_key_hash: str | None = None,
+        email: str | None = None,
     ) -> int:
         """Create a new user."""
         now = self._get_timestamp()
@@ -1266,7 +1260,7 @@ class MCPPostgresDB:
         except UniqueViolation:
             raise ValueError(f"Username '{username}' already exists.")
 
-    async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+    async def get_user_by_username(self, username: str) -> dict[str, Any] | None:
         """Get user details by username."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1278,7 +1272,7 @@ class MCPPostgresDB:
             row = await cur.fetchone()
         return dict(row) if row else None
 
-    async def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
+    async def get_user_by_id(self, user_id: int) -> dict[str, Any] | None:
         """Get user details by ID."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1292,7 +1286,7 @@ class MCPPostgresDB:
 
     async def get_user_by_api_key_hash(
         self, api_key_hash: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Get user details by API key hash."""
         if not api_key_hash:
             return None
@@ -1306,7 +1300,7 @@ class MCPPostgresDB:
             row = await cur.fetchone()
         return dict(row) if row else None
 
-    async def get_user_roles(self, user_id: int) -> List[Dict[str, Any]]:
+    async def get_user_roles(self, user_id: int) -> list[dict[str, Any]]:
         """Get all roles assigned to a user."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1321,7 +1315,7 @@ class MCPPostgresDB:
 
             return [dict(row) for row in rows]
 
-    async def get_role_permissions(self, role_id: int) -> List[Dict[str, Any]]:
+    async def get_role_permissions(self, role_id: int) -> list[dict[str, Any]]:
         """Get all permissions assigned to a role."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1355,7 +1349,7 @@ class MCPPostgresDB:
             logger.error(f"Failed to assign role {role_id} to user {user_id}: {e}")
             return False
 
-    async def create_role(self, name: str, description: Optional[str] = None) -> int:
+    async def create_role(self, name: str, description: str | None = None) -> int:
         """Create a new role."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1372,9 +1366,7 @@ class MCPPostgresDB:
         logger.info(f"Created role: {name}")
         return role_id
 
-    async def create_permission(
-        self, name: str, description: Optional[str] = None
-    ) -> int:
+    async def create_permission(self, name: str, description: str | None = None) -> int:
         """Create a new permission."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1412,49 +1404,48 @@ class MCPPostgresDB:
             )
             return False
 
-    async def update_user_roles(self, user_id: int, role_names: List[str]) -> bool:
+    async def update_user_roles(self, user_id: int, role_names: list[str]) -> bool:
         """Update the roles assigned to a user."""
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                # 1. Get role IDs for the given names
-                placeholders = ", ".join(["%s"] * len(role_names))
-                cur = await conn.execute(
-                    f"""
+        async with self.pool.connection() as conn, conn.transaction():
+            # 1. Get role IDs for the given names
+            placeholders = ", ".join(["%s"] * len(role_names))
+            cur = await conn.execute(
+                f"""
                     SELECT id, name FROM roles WHERE name IN ({placeholders})
                 """,  # nosec B608 — parameterized query, placeholders only
-                    list(role_names),
+                list(role_names),
+            )
+            roles = await cur.fetchall()
+            role_map = {r["name"]: r["id"] for r in roles}
+
+            # Check if all requested roles exist
+            if len(role_map) != len(role_names):
+                missing = set(role_names) - set(role_map.keys())
+                raise ValueError(
+                    f"The following roles do not exist: {', '.join(missing)}"
                 )
-                roles = await cur.fetchall()
-                role_map = {r["name"]: r["id"] for r in roles}
 
-                # Check if all requested roles exist
-                if len(role_map) != len(role_names):
-                    missing = set(role_names) - set(role_map.keys())
-                    raise ValueError(
-                        f"The following roles do not exist: {', '.join(missing)}"
-                    )
+            role_ids = list(role_map.values())
 
-                role_ids = list(role_map.values())
-
-                # 2. Delete existing roles for the user
-                await conn.execute(
-                    """
+            # 2. Delete existing roles for the user
+            await conn.execute(
+                """
                     DELETE FROM user_roles WHERE user_id = %s
                 """,
-                    (user_id,),
-                )
+                (user_id,),
+            )
 
-                # 3. Insert new roles for the user using the COPY protocol
-                if role_ids:
-                    values_to_insert = [(user_id, role_id) for role_id in role_ids]
-                    async with conn.cursor() as cur:
-                        async with cur.copy(
-                            "COPY user_roles (user_id, role_id) FROM STDIN"
-                        ) as copy:
-                            for record in values_to_insert:
-                                await copy.write_row(record)
-                logger.info(f"Updated roles for user {user_id} to: {role_names}")
-                return True
+            # 3. Insert new roles for the user using the COPY protocol
+            if role_ids:
+                values_to_insert = [(user_id, role_id) for role_id in role_ids]
+                async with (
+                    conn.cursor() as cur,
+                    cur.copy("COPY user_roles (user_id, role_id) FROM STDIN") as copy,
+                ):
+                    for record in values_to_insert:
+                        await copy.write_row(record)
+            logger.info(f"Updated roles for user {user_id} to: {role_names}")
+            return True
 
     async def set_user_active_status(self, user_id: int, is_active: bool) -> bool:
         """Set the active status for a user."""
@@ -1480,7 +1471,7 @@ class MCPPostgresDB:
 
     async def get_all_tools_for_backup(
         self, include_versions: bool = True
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """
         Get all tools with their details, optionally including all versions.
 
@@ -1517,7 +1508,7 @@ class MCPPostgresDB:
                         tool_dict["tool_id"] = str(tool_dict["tool_id"])
 
                     # Convert datetimes to ISO format for JSON serialization
-                    if "created_at" in tool_dict and tool_dict["created_at"]:
+                    if tool_dict.get("created_at"):
                         tool_dict["created_at"] = tool_dict["created_at"].isoformat()
 
                     # Handle multi-file tools
@@ -1557,10 +1548,7 @@ class MCPPostgresDB:
                             version_dict = dict(version)
 
                             # Convert datetimes for JSON serialization
-                            if (
-                                "created_at" in version_dict
-                                and version_dict["created_at"]
-                            ):
+                            if version_dict.get("created_at"):
                                 version_dict["created_at"] = version_dict[
                                     "created_at"
                                 ].isoformat()
@@ -1574,8 +1562,8 @@ class MCPPostgresDB:
 
                 return result
 
-        except Exception as e:
-            logger.error(f"Error getting all tools for backup: {e}", exc_info=True)
+        except Exception:
+            logger.exception("Error getting all tools for backup")
             raise
 
     @classmethod
@@ -1592,7 +1580,7 @@ class MCPPostgresDB:
 
     # --- OAuth Methods ---
 
-    async def get_oauth_client(self, client_id: str) -> Optional[Dict[str, Any]]:
+    async def get_oauth_client(self, client_id: str) -> dict[str, Any] | None:
         """Get an OAuth client by client_id."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1611,7 +1599,7 @@ class MCPPostgresDB:
                 return client
             return None
 
-    async def save_oauth_client(self, client: Dict[str, Any]) -> bool:
+    async def save_oauth_client(self, client: dict[str, Any]) -> bool:
         """Save a new OAuth client."""
         async with self.pool.connection() as conn:
             await conn.execute(
@@ -1641,7 +1629,7 @@ class MCPPostgresDB:
         self,
         client_id: str,
         user_id: int,
-        scope: Optional[str],
+        scope: str | None,
         code_challenge: str,
         code_challenge_method: str,
         redirect_uri: str,
@@ -1675,7 +1663,7 @@ class MCPPostgresDB:
 
         return code
 
-    async def get_auth_code(self, code: str) -> Optional[Dict[str, Any]]:
+    async def get_auth_code(self, code: str) -> dict[str, Any] | None:
         """Get an authorization code."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1702,8 +1690,8 @@ class MCPPostgresDB:
             return True
 
     async def create_tokens(
-        self, client_id: str, user_id: int, scope: Optional[str]
-    ) -> Dict[str, str]:
+        self, client_id: str, user_id: int, scope: str | None
+    ) -> dict[str, str]:
         """Create access and refresh tokens."""
         access_token = secrets.token_urlsafe(32)
         refresh_token = secrets.token_urlsafe(32)
@@ -1713,44 +1701,43 @@ class MCPPostgresDB:
             days=30
         )  # Refresh tokens expire after 30 days
 
-        async with self.pool.connection() as conn:
-            async with conn.transaction():
-                # Create access token
-                cur = await conn.execute(
-                    """
+        async with self.pool.connection() as conn, conn.transaction():
+            # Create access token
+            cur = await conn.execute(
+                """
                     INSERT INTO oauth_access_tokens (
                         token, client_id, user_id, scope, expires_at, created_at
                     ) VALUES (%s, %s, %s, %s, %s, %s)
                     RETURNING id
                 """,
-                    (access_token, client_id, user_id, scope, access_expires, now),
-                )
-                row = await cur.fetchone()
-                access_token_id = row["id"] if row else 0
+                (access_token, client_id, user_id, scope, access_expires, now),
+            )
+            row = await cur.fetchone()
+            access_token_id = row["id"] if row else 0
 
-                # Create refresh token
-                await conn.execute(
-                    """
+            # Create refresh token
+            await conn.execute(
+                """
                     INSERT INTO oauth_refresh_tokens (
                         token, client_id, user_id, scope, access_token_id, expires_at, created_at
                     ) VALUES (%s, %s, %s, %s, %s, %s, %s)
                 """,
-                    (
-                        refresh_token,
-                        client_id,
-                        user_id,
-                        scope,
-                        access_token_id,
-                        refresh_expires,
-                        now,
-                    ),
-                )
+                (
+                    refresh_token,
+                    client_id,
+                    user_id,
+                    scope,
+                    access_token_id,
+                    refresh_expires,
+                    now,
+                ),
+            )
 
         return {"access_token": access_token, "refresh_token": refresh_token}
 
     async def validate_refresh_token(
         self, refresh_token: str, client_id: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Validate a refresh token and return token data if valid."""
         now = self._get_timestamp()
 
@@ -1770,7 +1757,7 @@ class MCPPostgresDB:
 
     async def refresh_tokens(
         self, refresh_token: str, client_id: str
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """Create new tokens from a refresh token."""
         # Get refresh token data
         token_data = await self.validate_refresh_token(refresh_token, client_id)
@@ -1789,7 +1776,7 @@ class MCPPostgresDB:
 
     async def validate_client_credentials(
         self, client_id: str, client_secret: str
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Validate client credentials."""
         logger.info(f"Validating credentials for client_id: {client_id}")
 
@@ -1833,8 +1820,8 @@ class MCPPostgresDB:
                 return None
 
     async def create_client_credentials_token(
-        self, client_id: str, scope: Optional[str]
-    ) -> Dict[str, str]:
+        self, client_id: str, scope: str | None
+    ) -> dict[str, str]:
         """Create an access token for client credentials flow (no refresh token)."""
         logger.info(
             f"Creating client credentials token for client '{client_id}' with scope '{scope}'"
@@ -1876,7 +1863,7 @@ class MCPPostgresDB:
         return {"access_token": access_token}
 
     async def revoke_access_token(
-        self, token: str, client_id: Optional[str] = None
+        self, token: str, client_id: str | None = None
     ) -> bool:
         """Revoke an access token."""
         async with self.pool.connection() as conn:
@@ -1901,7 +1888,7 @@ class MCPPostgresDB:
             return True
 
     async def revoke_refresh_token(
-        self, token: str, client_id: Optional[str] = None
+        self, token: str, client_id: str | None = None
     ) -> bool:
         """Revoke a refresh token."""
         async with self.pool.connection() as conn:
@@ -1925,7 +1912,7 @@ class MCPPostgresDB:
             # Return True if any row was deleted
             return True
 
-    async def get_access_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def get_access_token(self, token: str) -> dict[str, Any] | None:
         """Get access token information."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(
@@ -1941,7 +1928,7 @@ class MCPPostgresDB:
                 return dict(row)
             return None
 
-    async def get_token_data(self, token: str) -> Optional[Dict[str, Any]]:
+    async def get_token_data(self, token: str) -> dict[str, Any] | None:
         """Get token data and check if it's valid (not expired).
 
         This method adds additional validation checks beyond get_access_token.
@@ -1961,7 +1948,7 @@ class MCPPostgresDB:
                 # If expires_at is timezone-aware, convert now to match
                 if hasattr(expires_at, "tzinfo") and expires_at.tzinfo is not None:
                     # Use UTC for consistency if comparing with timezone-aware datetimes
-                    now = datetime.now(timezone.utc)
+                    now = datetime.now(UTC)
 
                 if expires_at < now:
                     logger.warning(f"Token expired: {token[:15]}...")
@@ -1998,7 +1985,7 @@ class MCPPostgresDB:
                 logger.error(f"Error marking token as used: {e}")
                 return False
 
-    async def list_users(self) -> List[Dict[str, Any]]:
+    async def list_users(self) -> list[dict[str, Any]]:
         """Fetch all users from the database."""
         async with self.pool.connection() as conn:
             cur = await conn.execute(

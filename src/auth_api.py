@@ -1,22 +1,21 @@
 import logging
-import traceback
-from typing import Dict, Optional, List, Any, Annotated
+from typing import Annotated, Any
+
 from fastapi import (
     APIRouter,
+    Body,
     Depends,
     HTTPException,
-    status,
     Request,
-    Query,
-    Form,
-    Body,
+    status,
 )
 from pydantic import BaseModel, Field
 
-# Import directly from auth.py
-from .auth import get_current_user, requires_permission, AuthService
-from .dependencies import get_auth_service, get_audit_service
 from .audit import AuditLogService
+
+# Import directly from auth.py
+from .auth import AuthService, get_current_user, requires_permission
+from .dependencies import get_audit_service, get_auth_service
 
 logger = logging.getLogger(__name__)
 
@@ -38,8 +37,8 @@ class ApiKeyAuth(BaseModel):
 
 class UserCreate(BaseModel):
     username: str = Field(..., description="Username for the new user")
-    password: Optional[str] = Field(None, description="Password for human users")
-    roles: List[str] = Field(default=[], description="Roles to assign to the user")
+    password: str | None = Field(None, description="Password for human users")
+    roles: list[str] = Field(default=[], description="Roles to assign to the user")
     generate_api_key: bool = Field(
         default=False, description="Whether to generate an API key for this user"
     )
@@ -49,8 +48,8 @@ class UserResponse(BaseModel):
     id: int
     username: str
     is_active: bool
-    roles: List[str]
-    api_key: Optional[str] = None
+    roles: list[str]
+    api_key: str | None = None
 
 
 class ApiKeyResponse(BaseModel):
@@ -61,12 +60,12 @@ class ApiKeyResponse(BaseModel):
 class RoleResponse(BaseModel):
     id: int
     name: str
-    description: Optional[str] = None
-    permissions: List[str]
+    description: str | None = None
+    permissions: list[str]
 
 
 class PermissionResponse(BaseModel):
-    permissions: List[str] = []
+    permissions: list[str] = []
 
 
 class LoginRequest(BaseModel):
@@ -82,8 +81,8 @@ class LoginResponse(BaseModel):
 class RegisterRequest(BaseModel):
     username: str
     password: str
-    email: Optional[str] = None
-    roles: List[str] = Field(default=[], description="Initial roles to assign")
+    email: str | None = None
+    roles: list[str] = Field(default=[], description="Initial roles to assign")
 
 
 class RegisterResponse(BaseModel):
@@ -94,24 +93,24 @@ class RegisterResponse(BaseModel):
 class UserInfoResponse(BaseModel):
     id: int
     username: str
-    email: Optional[str] = None
+    email: str | None = None
     is_active: bool
-    roles: List[str] = []
-    permissions: List[str] = []
+    roles: list[str] = []
+    permissions: list[str] = []
 
 
 class ReadUserResponse(BaseModel):
     id: int
     username: str
-    email: Optional[str] = None
+    email: str | None = None
 
 
 class UserUpdate(BaseModel):
-    roles: Optional[List[str]] = Field(
+    roles: list[str] | None = Field(
         None, description="List of role names to assign (replaces existing roles)"
     )
-    is_active: Optional[bool] = Field(None, description="Set user active status")
-    email: Optional[str] = Field(None, description="Update user email")
+    is_active: bool | None = Field(None, description="Set user active status")
+    email: str | None = Field(None, description="Update user email")
 
 
 # Create the router
@@ -198,10 +197,7 @@ async def login(
 
         return LoginResponse(token=token)
     except Exception as e:
-        logger.error(
-            f"Login error after authentication for {login_data.username}: {e}",
-            exc_info=True,
-        )
+        logger.exception(f"Login error after authentication for {login_data.username}")
         log_details["error"] = str(e)
         await audit_service.log_event(
             actor_id=actor_id,
@@ -256,7 +252,6 @@ async def register(
                     f"Could not assign initial roles to user {user_id}: {role_err}"
                 )
                 log_details["role_assignment_warning"] = str(role_err)
-                pass
 
         await audit_service.log_event(
             actor_id=None,
@@ -284,10 +279,8 @@ async def register(
             request=request,
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-    except Exception as e:
-        logger.error(
-            f"User registration failed for {register_data.username}: {e}", exc_info=True
-        )
+    except Exception:
+        logger.exception(f"User registration failed for {register_data.username}")
         log_details["error"] = "Internal server error during registration."
         await audit_service.log_event(
             actor_id=None,
@@ -307,7 +300,7 @@ async def register(
 
 @router.get("/me", response_model=UserInfoResponse, summary="Get current user info")
 async def get_user_info(
-    current_user: Annotated[Dict[str, Any], Depends(get_current_user)],
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """
@@ -344,7 +337,7 @@ async def get_user_info(
 )
 async def get_user(
     user_id: int,
-    current_user: Annotated[Dict[str, Any], Depends(requires_permission("user:read"))],
+    current_user: Annotated[dict[str, Any], Depends(requires_permission("user:read"))],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """
@@ -372,9 +365,9 @@ async def get_user(
     )
 
 
-@router.get("/users", response_model=List[UserInfoResponse], summary="List all users")
+@router.get("/users", response_model=list[UserInfoResponse], summary="List all users")
 async def list_users(
-    current_user: Annotated[Dict[str, Any], Depends(requires_permission("user:list"))],
+    current_user: Annotated[dict[str, Any], Depends(requires_permission("user:list"))],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
 ):
     """
@@ -411,7 +404,7 @@ async def update_user(
     user_update_data: UserUpdate,
     request: Request,
     current_user: Annotated[
-        Dict[str, Any], Depends(requires_permission("user:update"))
+        dict[str, Any], Depends(requires_permission("user:update"))
     ],
     auth_service: Annotated[AuthService, Depends(get_auth_service)],
     audit_service: Annotated[AuditLogService, Depends(get_audit_service)],
@@ -432,20 +425,17 @@ async def update_user(
         "target_user_id": user_id,
         "updated_fields": list(updated_fields.keys()),
     }
-    update_successful = False
 
     try:
         if user_update_data.roles is not None:
             await auth_service.db.update_user_roles(user_id, user_update_data.roles)
             log_details["new_roles"] = user_update_data.roles
-            update_successful = True
 
         if user_update_data.is_active is not None:
             await auth_service.db.set_user_active_status(
                 user_id, user_update_data.is_active
             )
             log_details["new_active_status"] = user_update_data.is_active
-            update_successful = True
 
         if not updated_fields:
             raise HTTPException(
@@ -492,8 +482,8 @@ async def update_user(
         )
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
-    except Exception as e:
-        logger.error(f"Error updating user {user_id}: {e}", exc_info=True)
+    except Exception:
+        logger.exception(f"Error updating user {user_id}")
         log_details["error"] = "Internal server error during update."
         await audit_service.log_event(
             actor_id=current_user["id"],
@@ -517,7 +507,7 @@ async def update_user(
     summary="Get current user permissions",
 )
 async def get_permissions(
-    current_user: Annotated[Dict[str, Any], Depends(get_current_user)],
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
     auth_service: AuthService = Depends(get_auth_service),
 ):
     """
@@ -571,7 +561,7 @@ async def debug_token(
     except HTTPException as e:
         return {"token_type": "jwt", "valid": False, "error": e.detail}
     except Exception as e:
-        logger.error(f"Debug token error: {e}", exc_info=True)
+        logger.exception("Debug token error")
         return {
             "token_type": "unknown",
             "valid": False,

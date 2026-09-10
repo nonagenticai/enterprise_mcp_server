@@ -1,41 +1,16 @@
 #!/usr/bin/env python3
 # Standard Library Imports
-import os
-import json
-import base64
-import binascii
-import logging
-import time
-import hashlib
-import inspect
 import asyncio
-import ast
-import traceback
+import logging
+import os
 import sys
+from collections.abc import Callable
+from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import (
-    Dict,
-    List,
-    Optional,
-    Union,
     Any,
-    get_type_hints,
-    Annotated,
-    Set,
-    Callable,
-    Coroutine,
-    TypeVar,
     Literal,
 )
-from datetime import datetime, timedelta
-from pathlib import Path
-from io import StringIO
-from collections import defaultdict
-from functools import wraps
-import tempfile
-import subprocess
-import importlib
-from contextlib import asynccontextmanager
-from uuid_v7.base import uuid7
 
 # Add parent directory to path if running as main module
 if __name__ == "__main__":
@@ -45,24 +20,23 @@ if __name__ == "__main__":
 
 # Third-party Imports
 from dotenv import load_dotenv
-from fastmcp import FastMCP, Context
+from fastapi import FastAPI
+from fastmcp import FastMCP
 from pydantic import BaseModel, Field
 from RestrictedPython import (
-    compile_restricted_exec,
-    safe_builtins,
     limited_builtins,
+    safe_builtins,
     utility_builtins,
 )
-from fastapi import FastAPI
+
+from .audit import AuditLogService
+from .auth import AuthService
 
 # Local/Application Imports (Using only relative imports now)
 from .mcp_postgres_db import MCPPostgresDB
-from .auth import AuthService
-from .audit import AuditLogService
-from .dependencies import get_db, get_auth_service, get_audit_service, get_tool_registry
-from .tools.tool import tool_mcp  # Import the tool server
 from .tools.claude import claude_mcp  # Import Claude Code tools
 from .tools.claude_auth import claude_auth_mcp  # Import Claude authentication tools
+from .tools.tool import tool_mcp  # Import the tool server
 
 # Configure logging
 logging.basicConfig(
@@ -77,7 +51,7 @@ load_dotenv()
 # Constants
 MCP_SERVER_NAME = os.getenv("MCP_SERVER_NAME", "Enterprise MCP Gateway Server")
 HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", 8030))
+PORT = int(os.getenv("PORT", "8030"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
 
 # --- Single FastMCP Instance ---
@@ -172,7 +146,7 @@ async def audit_log_retention_task(audit_service: AuditLogService):
     """Independent task for audit log cleanup, managed by AuditLogService itself."""
     # The AuditLogService now manages its own cleanup task internally.
     logger.info("Audit log retention task started (managed by AuditLogService).")
-    pass  # Let AuditLogService handle it.
+    # Let AuditLogService handle it.
 
 
 # --- Enterprise Gateway Server: No Built-in Tools ---
@@ -195,13 +169,13 @@ async def register_builtin_tools(mcp_instance):
 class CodeAnalysisResult(BaseModel):
     is_safe: bool
     risk_level: Literal["none", "low", "medium", "high"]
-    detected_issues: List[str] = Field(default_factory=list)
-    imports: List[str] = Field(default_factory=list)
-    details: Dict[str, Any] = Field(default_factory=dict)
+    detected_issues: list[str] = Field(default_factory=list)
+    imports: list[str] = Field(default_factory=list)
+    details: dict[str, Any] = Field(default_factory=dict)
 
 
 # Global set to store allowed import names for sandboxed execution
-allowed_imports: Set[str] = {
+allowed_imports: set[str] = {
     "math",
     "random",
     "datetime",
@@ -251,9 +225,9 @@ def _create_openapi_tool_function(
     method: str,
     path: str,
     base_url: str,
-    operation_spec: Dict,
-    parameters_spec: List[Dict],
-    components: Dict,
+    operation_spec: dict,
+    parameters_spec: list[dict],
+    components: dict,
 ) -> Callable:
     """
     Enterprise Gateway Server: Stub function that raises an exception.
