@@ -7,7 +7,7 @@ chain is expected to make that change in this file.
 """
 
 
-def format_receipt(items: list[tuple[str, int]]) -> str:
+def format_receipt(items: list[tuple[str, int]], currency: str | None = None) -> str:
     """Render ``items`` as ``NAME  AMOUNT`` lines plus a TOTAL line.
 
     THE WORK ITEM: this signature takes ONLY ``items``. The autonomous
@@ -17,6 +17,7 @@ def format_receipt(items: list[tuple[str, int]]) -> str:
     description of the finished behaviour sitting next to the unfinished code
     reads as evidence that the work is already done.
     """
-    lines = [f"{name}  {amount}" for name, amount in items]
-    lines.append(f"TOTAL  {sum(a for _, a in items)}")
+    prefix = f"{currency} " if currency else ""
+    lines = [f"{name}  {prefix}{amount}" for name, amount in items]
+    lines.append(f"TOTAL  {prefix}{sum(a for _, a in items)}")
     return "\n".join(lines)
