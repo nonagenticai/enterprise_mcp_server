@@ -7,16 +7,14 @@ chain is expected to make that change in this file.
 """
 
 
-def format_receipt(items: list[tuple[str, int]]) -> str:
+def format_receipt(items: list[tuple[str, int]], currency: str | None = None) -> str:
     """Render ``items`` as ``NAME  AMOUNT`` lines plus a TOTAL line.
 
-    THE WORK ITEM: this signature takes ONLY ``items``. The autonomous
-    `development_feature_update` chain is expected to extend it here. The exact
-    required behaviour is asserted in aa_feature_probe/check_update.py -- read
-    that file for the specification; it is not restated here, because a
-    description of the finished behaviour sitting next to the unfinished code
-    reads as evidence that the work is already done.
+    If ``currency`` is provided (e.g. ``"EUR"``), every amount -- including the
+    TOTAL -- is prefixed with ``"<currency> "``. Omitting ``currency`` keeps the
+    output byte-identical to the previous bare-number behaviour.
     """
-    lines = [f"{name}  {amount}" for name, amount in items]
-    lines.append(f"TOTAL  {sum(a for _, a in items)}")
-    return "\n".join(lines)
+    prefix = f"{currency} " if currency is not None else ""
+    lines = [f"{name}  {prefix}{amount}" for name, amount in items]
+    lines.append(f"TOTAL  {prefix}{sum(a for _, a in items)}")
+    return "\n".join(lines)}], 
