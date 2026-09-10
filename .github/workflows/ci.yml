@@ -176,33 +176,103 @@ jobs:
           echo "INVARIANT oracles    : ${INVARIANTS}"
           echo
 
-          FAILED=""
-          RAN=0
+          # ⛔ THE VERDICT IS "NO REGRESSION", NOT "ALL GREEN". This is the whole design, and
+          # requiring all-green was a real defect that I measured against a real PR before
+          # changing it. The probes here are DELIBERATELY seeded defective, and ONE package
+          # can hold SEVERAL INDEPENDENT gaps: aa_feature_probe holds check_new (no
+          # reserve_stock), check_poc (no poc.py) and check_update (no currency kwarg).
+          # The autonomous conveyor produced PR #144, which correctly fixes ONLY the update
+          # gap in one file. Measured exit codes:
+          #     oracle                          base(main)   PR #144 head
+          #     aa_feature_probe.check_new          1             1
+          #     aa_feature_probe.check_poc          1             1
+          #     aa_feature_probe.check_update       1             0   <- fixed
+          # An all-green rule marks that textbook-correct PR RED. A gate that fails every
+          # legitimate single-gap PR is worse than no gate: it trains everyone to ignore it.
+          # So each oracle is evaluated on the BASE and on HEAD, and only base==0 && head!=0
+          # (a real regression) is fatal. The two invariants are green on base by design, so
+          # this rule still protects them fully -- breaking one IS a regression.
+          BASE_WT="$(mktemp -d)"
+          if ! git worktree add --detach "${BASE_WT}" "${BASE_SHA}" >/dev/null 2>&1; then
+            echo "FAIL: could not create a base worktree at ${BASE_SHA}. Refusing to ASSUME a"
+            echo "      base status -- an assumed base lets a real regression through as"
+            echo "      'it was already red'."
+            exit 1
+          fi
+
+          # ⛔ THE INTERPRETER MUST EXIST BEFORE ANY ABSENCE IS BELIEVED. Without this, a
+          # missing `python` makes every invocation exit 127 -- and 127 was my absence
+          # sentinel, so every oracle would read "absent on base, cannot be a regression"
+          # and the job would report GREEN having executed NOTHING. I hit exactly that
+          # locally, where the binary is `python3`. An exit code that means both "clean"
+          # and "never ran" is not a gate.
+          if ! python -c 'pass' 2>/dev/null; then
+            echo "FAIL: no usable \`python\` on PATH. Refusing to grade -- an unrunnable"
+            echo "      interpreter must not be reported as 'nothing to regress'."
+            exit 1
+          fi
+
+          # Exit code of one oracle in one tree. 200 = the module is ABSENT in that tree --
+          # deliberately a value no Python process can return, so absence can never be
+          # confused with a real exit code (127 can and did).
+          ORACLE_ABSENT=200
+          oracle_exit() {
+            local tree="$1" mod="$2" rel
+            rel="$(printf '%s' "${mod}" | tr '.' '/').py"
+            [ -f "${tree}/${rel}" ] || return "${ORACLE_ABSENT}"
+            ( cd "${tree}" && python -m "${mod}" >/dev/null 2>&1 )
+          }
+
+          FAILED=""; EVALUATED=0; FIXED=""; STILLRED=""; HELD=""; NEW=""
           for mod in ${INVARIANTS} ${SCOPED}; do
-            path="$(printf '%s' "${mod}" | tr '.' '/').py"
-            if [ ! -f "${path}" ]; then
-              echo "FAIL ${mod}: ${path} does not exist (an oracle was deleted?)"
-              FAILED="${FAILED} ${mod}"
-              continue
+            head_rel="$(printf '%s' "${mod}" | tr '.' '/').py"
+            if [ ! -f "${head_rel}" ]; then
+              # Deleted on HEAD but present on base is the delete-the-evidence case the
+              # invariants exist to catch. Absent in BOTH is a selection bug, also fatal.
+              echo "FAIL ${mod}: ${head_rel} does not exist on HEAD (an oracle was deleted?)"
+              FAILED="${FAILED} ${mod}"; continue
             fi
-            echo "--- python -m ${mod}"
-            if python -m "${mod}"; then
-              RAN=$((RAN + 1))
-            else
-              echo "^^^ ${mod} exited non-zero"
+            # ⚠️ `cmd; x=$?` is NOT a set -e checked context, so a failing oracle would abort
+            # the whole job before any comparison ran -- i.e. the gate would die on exactly
+            # the seeded-red oracles it is built to tolerate. `|| x=$?` is the checked form.
+            h=0; oracle_exit "." "${mod}" || h=$?
+            b=0; oracle_exit "${BASE_WT}" "${mod}" || b=$?
+            EVALUATED=$((EVALUATED + 1))
+            if [ "${b}" -eq "${ORACLE_ABSENT}" ]; then
+              echo "NEW      ${mod}: absent on base, exit ${h} on HEAD (cannot be a regression)"
+              NEW="${NEW} ${mod}"
+              [ "${h}" -eq 0 ] || echo "         ...and it does not pass yet"
+            elif [ "${b}" -eq 0 ] && [ "${h}" -ne 0 ]; then
+              echo "REGRESSION ${mod}: base 0 -> HEAD ${h}  <-- THE ONLY FATAL CASE"
+              python -m "${mod}" || true
               FAILED="${FAILED} ${mod}"
+            elif [ "${b}" -ne 0 ] && [ "${h}" -eq 0 ]; then
+              echo "FIXED    ${mod}: base ${b} -> HEAD 0"
+              FIXED="${FIXED} ${mod}"
+            elif [ "${b}" -ne 0 ] && [ "${h}" -ne 0 ]; then
+              echo "STILL RED ${mod}: base ${b} -> HEAD ${h} (pre-existing seeded defect, not a regression)"
+              STILLRED="${STILLRED} ${mod}"
+            else
+              echo "HELD     ${mod}: base 0 -> HEAD 0"
+              HELD="${HELD} ${mod}"
             fi
           done
 
+          git worktree remove --force "${BASE_WT}" >/dev/null 2>&1 || true
+
           echo
           if [ -n "${FAILED}" ]; then
-            echo "RED: oracle(s) failed:${FAILED}"
+            echo "RED: regression(s) or missing oracle(s):${FAILED}"
             exit 1
           fi
           # Positive control: the two invariants are unconditional, so anything below 2 means
-          # the runner never executed them and this green would be vacuous.
-          if [ "${RAN}" -lt 2 ]; then
-            echo "FAIL: only ${RAN} oracle(s) ran; the 2 invariant oracles are unconditional"
+          # the runner never evaluated them and this green would be vacuous.
+          if [ "${EVALUATED}" -lt 2 ]; then
+            echo "FAIL: only ${EVALUATED} oracle(s) evaluated; the 2 invariant oracles are unconditional"
             exit 1
           fi
-          echo "GREEN: ${RAN} oracle(s) exited 0 (2 invariant + $((RAN - 2)) scoped)"
+          echo "GREEN: no regressions. ${EVALUATED} oracle(s) evaluated"
+          echo "   held     :${HELD:- (none)}"
+          echo "   fixed    :${FIXED:- (none)}"
+          echo "   still red:${STILLRED:- (none)}"
+          echo "   new      :${NEW:- (none)}"
