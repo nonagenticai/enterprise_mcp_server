@@ -101,21 +101,18 @@ class AuditLogService:
             Number of log entries deleted
         """
         try:
-            async with self.db.pool.acquire() as conn:
-                result = await conn.execute(
-                    "DELETE FROM audit_logs WHERE timestamp < $1", cutoff_date
+            async with self.db.pool.connection() as conn:
+                cur = await conn.execute(
+                    "DELETE FROM audit_logs WHERE timestamp < %s", (cutoff_date,)
                 )
-                # Parse the DELETE n result to get the count
-                deleted_count = 0
-                if hasattr(result, "split"):
-                    # Format is typically "DELETE n"
-                    parts = result.split()
-                    if len(parts) > 1 and parts[0] == "DELETE":
-                        try:
-                            deleted_count = int(parts[1])
-                        except (ValueError, IndexError):
-                            deleted_count = 0
-                return deleted_count
+                # psycopg reports affected rows on the cursor. (asyncpg returned a
+                # "DELETE n" status string instead; parsing that here always yielded
+                # 0 against psycopg, which silently disabled log retention.)
+                return (
+                    cur.rowcount
+                    if cur.rowcount is not None and cur.rowcount >= 0
+                    else 0
+                )
         except Exception:
             logger.exception(f"Error deleting audit logs before {cutoff_date}")
             return 0
