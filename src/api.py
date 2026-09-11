@@ -227,10 +227,12 @@ async def create_user(
     if user.roles:
         for role_name in user.roles:
             # Get role ID by name
-            async with db.pool.acquire() as conn:
-                role_id = await conn.fetchval(
-                    "SELECT id FROM roles WHERE name = $1", role_name
+            async with db.pool.connection() as conn:
+                cur = await conn.execute(
+                    "SELECT id FROM roles WHERE name = %s", (role_name,)
                 )
+                _r = await cur.fetchone()
+                role_id = next(iter(_r.values())) if _r else None
                 if role_id:
                     await db.assign_role_to_user(user_id, role_id)
 
@@ -252,8 +254,9 @@ async def list_users(
     db: Annotated[MCPPostgresDB, Depends(get_db)],
 ):
     """List all users."""
-    async with db.pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM users")
+    async with db.pool.connection() as conn:
+        cur = await conn.execute("SELECT * FROM users")
+        rows = await cur.fetchall()
         users = []
 
         for row in rows:
@@ -334,8 +337,9 @@ async def list_clients(
 ):
     """List all OAuth clients."""
     try:
-        async with db.pool.acquire() as conn:
-            rows = await conn.fetch("SELECT * FROM oauth_clients")
+        async with db.pool.connection() as conn:
+            cur = await conn.execute("SELECT * FROM oauth_clients")
+            rows = await cur.fetchall()
             clients = []
 
             for row in rows:
@@ -365,10 +369,16 @@ async def server_status(db: Annotated[MCPPostgresDB, Depends(get_db)]):
     """Get current server status."""
 
     # Get counts of various entities
-    async with db.pool.acquire() as conn:
-        user_count = await conn.fetchval("SELECT COUNT(*) FROM users")
-        client_count = await conn.fetchval("SELECT COUNT(*) FROM oauth_clients")
-        tool_count = await conn.fetchval("SELECT COUNT(*) FROM mcp_tools")
+    async with db.pool.connection() as conn:
+        cur = await conn.execute("SELECT COUNT(*) FROM users")
+        _r = await cur.fetchone()
+        user_count = next(iter(_r.values())) if _r else None
+        cur = await conn.execute("SELECT COUNT(*) FROM oauth_clients")
+        _r = await cur.fetchone()
+        client_count = next(iter(_r.values())) if _r else None
+        cur = await conn.execute("SELECT COUNT(*) FROM mcp_tools")
+        _r = await cur.fetchone()
+        tool_count = next(iter(_r.values())) if _r else None
         session_count = 0  # This would need to be tracked elsewhere
 
         return {

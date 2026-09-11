@@ -26,6 +26,35 @@ jobs:
   # This job runs that suite, and only that suite.
   tests:
     runs-on: ubuntu-latest
+    # WHY A DATABASE SERVICE. `src/auth.py`, `src/audit.py` and `src/api.py` were never
+    # migrated from asyncpg to psycopg v3 and called `pool.acquire()`, `conn.fetch()`,
+    # `conn.fetchval()`, `conn.fetchrow()` and `$1` placeholders -- none of which exist on
+    # psycopg -- so those paths raised AttributeError at runtime. Nothing caught it for
+    # months: `compile` only parses, `smoke` never installs the project, and no test had
+    # ever opened a connection. `tests/test_db_integration.py` closes that, but it needs a
+    # REAL PostgreSQL: a mocked pool would be written against whichever driver API the
+    # author believed in, and would have agreed with the bug.
+    #
+    # This is a SERVICE on the existing job, deliberately NOT a fourth job: downstream
+    # automation gates on the number of checks this workflow reports, so adding a job
+    # would break it silently. Keep this workflow at three checks.
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: verify
+          POSTGRES_PASSWORD: verify
+          POSTGRES_DB: ems_verify
+        ports:
+          - 5432:5432
+        # Without a health check the suite races the server's first-boot initdb.
+        options: >-
+          --health-cmd "pg_isready -U verify -d ems_verify"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql://verify:verify@localhost:5432/ems_verify
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
