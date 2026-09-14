@@ -10,7 +10,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Install dependencies (resolve graph)
         run: uv sync --no-install-project --frozen || uv sync --no-install-project
       - name: Import smoke (bumped dependency)
@@ -59,7 +59,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       # `--no-install-project` is deliberately absent: the suite imports `src.http_utils`.
       #
       # `--locked`, NOT `--frozen`, and no `|| uv sync` fallback. Measured on this branch:
@@ -85,7 +85,7 @@ jobs:
   # so nothing outside `tests/` is ever parsed. This job is the only thing that reads the rest.
   #
   # WHAT THIS ASSERTS: every file `git ls-files '*.py'` reports is syntactically valid
-  # Python under the interpreter this repo pins (3.12). Tracked-only and pattern-scoped, so a
+  # Python under the interpreter this repo pins (3.14). Tracked-only and pattern-scoped, so a
   # file whose name does not end in `.py` (an editor backup such as `foo.py.bak`) and untracked
   # scratch files stay out of scope, and `compileall` cannot silently widen it. It fails loudly if the file list comes back
   # EMPTY -- a gate that counts no sites cannot fail one.
@@ -100,11 +100,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Plain setup-python, not setup-uv: this job must not depend on the dependency graph.
-      # Pinned to 3.12 because syntax acceptance is interpreter-version-dependent and
-      # `requires-python = ">=3.12,<3.14"` -- the floor is what has to parse.
+      # Pinned to 3.14 because syntax acceptance is interpreter-version-dependent and
+      # `requires-python = ">=3.14"` -- the floor is what has to parse.
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
       - name: Parse every tracked Python file
         shell: bash
         run: |

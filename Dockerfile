@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 LABEL description="Enterprise MCP Gateway Server with Claude Code CLI"
 LABEL version="1.3"
