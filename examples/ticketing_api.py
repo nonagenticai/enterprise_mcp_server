@@ -10,13 +10,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, LiteralString, TypeVar
+from typing import Any, LiteralString, ParamSpec, TypeVar
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-from typing_extensions import ParamSpec
 from uuid_v7.base import uuid7
 
 P = ParamSpec("P")
