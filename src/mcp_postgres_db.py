@@ -50,7 +50,7 @@ class MCPPostgresDB:
     @classmethod
     async def connect(
         cls, max_retries: int = 5, retry_delay: float = 2.0
-    ) -> "MCPPostgresDB":
+    ) -> MCPPostgresDB:
         """Create a new database connection pool and instance with retry logic.
 
         Args:

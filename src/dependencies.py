@@ -28,7 +28,9 @@ def get_db(request: Request) -> MCPPostgresDB:
     return db
 
 
-def get_auth_service(request: Request) -> "AuthService":
+def get_auth_service(request: Request) -> "AuthService":  # noqa: UP037 -- AuthService is TYPE_CHECKING-only (circular import via .auth);
+    # unquoting it makes __annotations__ resolution raise NameError under PEP 649,
+    # which FastAPI's dependency injection triggers. The quotes are load-bearing.
     """Dependency to get the auth service instance from app state."""
     auth_service = getattr(request.app.state, "auth_service", None)
     if auth_service is None:
