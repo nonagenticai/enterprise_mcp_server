@@ -763,6 +763,7 @@ async def list_tools(
             actor_type=actor_type,  # Use derived actor_type
             action_type="list_tools",  # Use action_type
             resource_type="tools",  # Use resource_type
+            resource_id="tools",  # <-- Add this argument
             status="denied",
             details="Insufficient permissions: requires 'tool:read'",  # More specific detail
         )
