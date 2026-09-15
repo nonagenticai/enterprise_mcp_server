@@ -136,3 +136,23 @@ jobs:
               sys.exit(1)
           print(f"PASS: all {len(files)} tracked Python file(s) parse under Python {sys.version.split()[0]}")
           PY
+
+      # WHY THESE TWO STEPS ARE HERE AND NOT ANYWHERE ELSE. Both are stdlib-only AST
+      # walkers over `src/`: no install, no dependency graph, nothing but the interpreter
+      # this job already pins -- which is precisely this job's charter ("the only thing
+      # that reads the rest" of the tree).
+      #
+      # They are deliberately NOT pytest tests, so `testpaths` cannot reach them:
+      # `checks/__init__.py` says so, they define no `test_*` function and their filenames
+      # match neither `test_*.py` nor `*_test.py`. Measured: `pytest checks/ --collect-only`
+      # exits 5 with 0 items. Adding `checks` to `testpaths` would LOOK like wiring and gate
+      # nothing at all. A fourth job is also ruled out -- see "Keep this workflow at three
+      # checks" on the `tests` job above -- so they run as ordinary steps of this one.
+      #
+      # Each is a BARE single command. No `|| true`, no `|| echo`, no pipe, no `if`
+      # condition: `main()` returns the verdict as an exit code and that exit code must be
+      # the step's, or the gate prints its own failure into a green check.
+      - name: Oracle -- every audit log_event call passes every required argument
+        run: python3 -m checks.audit_call_arity
+      - name: Oracle -- every HTTP_* constant resolves to an imported status module
+        run: python3 -m checks.http_status_binding

@@ -3,6 +3,14 @@ from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+
+# Imported ALIASED, and the alias is load-bearing. `get_audit_logs` below declares a
+# query parameter literally named `status` (the public wire name external callers send),
+# so inside that function a plain `from fastapi import status` would still be shadowed by
+# the parameter: `status.HTTP_500_INTERNAL_SERVER_ERROR` would resolve to the parameter
+# (`None` on a request that omits the filter) and raise AttributeError on the very error
+# path it guards. Renaming the parameter instead would change the public query-param name.
+from fastapi import status as http_status
 from pydantic import BaseModel
 
 from .audit import AuditLogService
@@ -142,6 +150,6 @@ async def get_audit_logs(
         )
 
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to retrieve audit logs: {e}",
         )
