@@ -147,12 +147,32 @@ def generate_hostile_uris() -> list[tuple[str, str]]:
 # this oracle demand a feature alongside the fix, so a change that correctly repairs the
 # host-boundary bug would still fail. One oracle, one property.
 # ⇒ If loopback-by-IP should be accepted, that is its own card. Recorded, not required.
-LEGITIMATE = [
-    "https://app.example.com/callback",
-    "https://example.com/cb?x=1",
-    "http://localhost/cb",
-    "http://localhost:8080/cb",
-]
+#
+# ⛔ GENERATED, for the same reason the hostile side is. A second adversarial review passed the
+# oracle with `startswith("http://localhost:") and "@" not in uri` -- 9/9, 4/4, exit 0 -- because
+# no fixed legitimate case carried an `@` outside the host. That rule wrongly rejects
+# `http://localhost:8080/cb?state=x@y`. A fixed fixture on ONE side of a generated oracle is
+# exactly the asymmetry that lets a heuristic hide. So these vary path, query and fragment, and
+# deliberately place `@` and `localhost`-lookalikes where a real URL parse must NOT care.
+def generate_legitimate_uris() -> list[str]:
+    a, b = _safe_label(), _safe_label()
+    port = random.choice(("3000", "5173", "8080", "8443"))
+    cands = [
+        f"https://{a}.example.com/callback",
+        f"https://{a}.example.com/cb?state={b}",
+        f"https://{a}.example.com/cb?next=user@{b}.example",  # '@' in QUERY
+        f"https://{a}.example.com/cb#frag@{b}",  # '@' in FRAGMENT
+        "http://localhost/cb",
+        f"http://localhost:{port}/cb",
+        f"http://localhost:{port}/cb?state=x@y",  # '@' in QUERY on a loopback host
+        f"http://localhost/{a}/cb?redirect=localhost{b}",  # lookalike only in the path/query
+    ]
+    fair = [u for u in cands if _should_accept(u)]
+    if len(fair) != len(
+        cands
+    ):  # pragma: no cover - a reference-rule bug, not a real case
+        raise RuntimeError("generated a 'legitimate' URI the reference rule rejects")
+    return fair
 
 
 def _extract_acceptance(tree: ast.AST) -> callable | None:
@@ -176,35 +196,76 @@ def _extract_acceptance(tree: ast.AST) -> callable | None:
             var = node.target.id if isinstance(node.target, ast.Name) else None
             if var is None:
                 continue
-            for index, stmt in enumerate(node.body):
-                if not isinstance(stmt, ast.If):
-                    continue
-                raises = any(isinstance(s, ast.Raise) for s in ast.walk(stmt))
-                if not raises:
-                    continue
-                test = stmt.test
-                negated = isinstance(test, ast.UnaryOp) and isinstance(test.op, ast.Not)
-                expr = test.operand if negated else test
+            # ⚠️ SIMULATE THE WHOLE LOOP BODY, not one `if` test.
+            # The real code accepts a URI iff NO guard in the loop raises. Two earlier
+            # versions graded a single expression and each was wrong in a different way:
+            #   * evaluating only the `if` test raised NameError against a fix that bound a
+            #     local first (`parsed = urlparse(uri)`) -> exit 2, "measured nothing";
+            #   * grading only the FIRST `if...raise` scored a fully-correct fix 0/9 when a
+            #     harmless earlier guard (`if len(uri) > 2048: raise`) preceded it -> a
+            #     conveyor that rejects a correct security fix outright.
+            # So: rewrite the loop body as a function where every `if X: raise` becomes
+            # `if X: return False`, other statements pass through in order, and the tail is
+            # `return True`. Locals, ordering and multiple guards all behave as shipped.
+            guards = 0
 
-                # ⚠️ EXECUTE THE LOOP-BODY PREFIX, not just the `if` test.
-                # A correct fix may well bind a local first (`parsed = urlparse(uri)`) and
-                # test that. Evaluating the test ALONE then raises NameError and this oracle
-                # reports "measured nothing" -- which is honest but useless, because a gate a
-                # correct fix cannot turn green is not a gate. Measured: an early version did
-                # exactly this and scored exit 2 against a genuine urlparse-based repair.
-                prefix = [s for s in node.body[:index] if not isinstance(s, ast.Return)]
-                module = ast.Module(
-                    body=[
-                        *prefix,
-                        ast.Assign(
-                            targets=[ast.Name(id="__verdict", ctx=ast.Store())],
-                            value=expr,
+            def _to_check_body(stmts: list[ast.stmt]) -> list[ast.stmt]:
+                nonlocal guards
+                out: list[ast.stmt] = []
+                for s in stmts:
+                    if isinstance(s, ast.If) and any(
+                        isinstance(x, ast.Raise) for x in ast.walk(s)
+                    ):
+                        guards += 1
+                        out.append(
+                            ast.If(
+                                test=s.test,
+                                body=[ast.Return(value=ast.Constant(value=False))],
+                                orelse=_to_check_body(s.orelse) if s.orelse else [],
+                            )
+                        )
+                    elif isinstance(s, ast.Return | ast.Continue | ast.Break):
+                        continue  # not meaningful inside the simulated check
+                    else:
+                        out.append(s)
+                return out
+
+            body = _to_check_body(node.body)
+            if guards == 0:
+                continue  # this loop rejects nothing -- not the validation loop
+            body.append(ast.Return(value=ast.Constant(value=True)))
+            check_fn = ast.FunctionDef(
+                name="__check",
+                args=ast.arguments(
+                    posonlyargs=[],
+                    args=[ast.arg(arg=var)],
+                    kwonlyargs=[],
+                    kw_defaults=[],
+                    defaults=[],
+                ),
+                body=body,
+                decorator_list=[],
+                returns=None,
+                type_params=[],
+            )
+            module = ast.Module(
+                body=[
+                    check_fn,
+                    ast.Assign(
+                        targets=[ast.Name(id="__verdict", ctx=ast.Store())],
+                        value=ast.Call(
+                            func=ast.Name(id="__check", ctx=ast.Load()),
+                            args=[ast.Name(id=var, ctx=ast.Load())],
+                            keywords=[],
                         ),
-                    ],
-                    type_ignores=[],
-                )
-                ast.fix_missing_locations(module)
-                code = compile(module, filename="<acceptance>", mode="exec")
+                    ),
+                ],
+                type_ignores=[],
+            )
+            ast.fix_missing_locations(module)
+            code = compile(module, filename="<acceptance>", mode="exec")
+            negated = True  # __verdict IS the accept verdict; no inversion below
+            if True:
 
                 def accepts(uri: str, _code=code, _var=var, _negated=negated) -> bool:
                     # `if not X: raise`  => X is the ACCEPT predicate
@@ -230,8 +291,9 @@ def _extract_acceptance(tree: ast.AST) -> callable | None:
                         raise RuntimeError(
                             "too many unresolved names in the acceptance expression"
                         )
-                    value = bool(ns["__verdict"])
-                    return value if _negated else not value
+                    return bool(
+                        ns["__verdict"]
+                    )  # __check already returns the accept verdict
 
                 return accepts
     return None
@@ -272,6 +334,19 @@ def main() -> int:
         print("This check measured nothing; do not read it as a pass.")
         return EXIT_NO_MEASUREMENT
 
+    try:
+        legitimate = generate_legitimate_uris()
+    except RuntimeError as exc:
+        print(f"HARNESS: {exc}")
+        print("This check measured nothing; do not read it as a pass.")
+        return EXIT_NO_MEASUREMENT
+    if len(legitimate) != 8:
+        print(
+            f"HARNESS: generated {len(legitimate)} legitimate cases, expected exactly 8."
+        )
+        print("This check measured nothing; do not read it as a pass.")
+        return EXIT_NO_MEASUREMENT
+
     if len(hostile) != 9:
         print(
             f"HARNESS: generated {len(hostile)} hostile cases, expected exactly 9 (5 host-position + 4 userinfo)."
@@ -291,7 +366,7 @@ def main() -> int:
         if verdict:
             wrongly_accepted.append((uri, why, urlparse(uri).hostname))
 
-    for uri in LEGITIMATE:
+    for uri in legitimate:
         try:
             verdict = accepts(uri)
         except Exception as exc:
@@ -305,7 +380,7 @@ def main() -> int:
         f"hostile hosts rejected:   {len(hostile) - len(wrongly_accepted)}/{len(hostile)}"
     )
     print(
-        f"legitimate URIs accepted: {len(LEGITIMATE) - len(wrongly_rejected)}/{len(LEGITIMATE)}"
+        f"legitimate URIs accepted: {len(legitimate) - len(wrongly_rejected)}/{len(legitimate)}"
     )
 
     if wrongly_accepted:
