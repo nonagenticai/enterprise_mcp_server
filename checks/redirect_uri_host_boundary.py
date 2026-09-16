@@ -70,6 +70,22 @@ from urllib.parse import urlparse
 
 EXIT_FIXED, EXIT_DEFECT, EXIT_NO_MEASUREMENT = 0, 1, 2
 
+# Compound statements under which a `raise`'s reachability cannot be folded into a boolean.
+# Module-level on purpose: defined inside the extractor's loop it was a late-bound capture
+# (ruff B023) -- harmless in practice, but a constant belongs at exactly one scope.
+_UNFOLDABLE = (
+    ast.For,
+    ast.AsyncFor,
+    ast.While,
+    ast.Try,
+    ast.With,
+    ast.AsyncWith,
+    ast.FunctionDef,
+    ast.AsyncFunctionDef,
+    ast.ClassDef,
+    ast.Match,
+)
+
 SRC = Path(__file__).resolve().parent.parent / "src" / "api.py"
 TARGET_FUNC = "register_client"
 LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
@@ -209,28 +225,55 @@ def _extract_acceptance(tree: ast.AST) -> callable | None:
             # `return True`. Locals, ordering and multiple guards all behave as shipped.
             guards = 0
 
-            def _to_check_body(stmts: list[ast.stmt]) -> list[ast.stmt]:
+            # ⛔ REWRITE EACH `raise` STATEMENT IN PLACE, RECURSING ONLY THROUGH `if`.
+            # A third adversarial review broke the previous transform, which collapsed an
+            # OUTER `if` to `return False` whenever a `raise` appeared ANYWHERE in its subtree.
+            # That graded the outer condition, not the REACHABILITY of the raise:
+            #     if <correct condition>:
+            #         if False:
+            #             raise HTTPException(400, ...)
+            # scored 9/9, 8/8, exit 0 -- while validating NOTHING at runtime. A false PASS
+            # certifying a total regression is the single worst thing this file could do.
+            # Replacing the `raise` statement itself, in place, folds every enclosing `if`
+            # naturally: the dead `if False:` above becomes `if False: return False`, never
+            # fires, the URI is accepted, and the oracle correctly reds. A raise under any
+            # NON-`if` compound (for/while/try/with) or any continue/break/return means
+            # reachability cannot be folded into a boolean -- so REFUSE TO GRADE (exit 2)
+            # rather than guess. "Measured nothing" is the only honest answer there.
+            def _rewrite(stmts: list[ast.stmt]) -> list[ast.stmt]:
                 nonlocal guards
                 out: list[ast.stmt] = []
                 for s in stmts:
-                    if isinstance(s, ast.If) and any(
-                        isinstance(x, ast.Raise) for x in ast.walk(s)
-                    ):
+                    if isinstance(s, ast.Raise):
                         guards += 1
+                        out.append(ast.Return(value=ast.Constant(value=False)))
+                    elif isinstance(s, ast.If):
                         out.append(
                             ast.If(
                                 test=s.test,
-                                body=[ast.Return(value=ast.Constant(value=False))],
-                                orelse=_to_check_body(s.orelse) if s.orelse else [],
+                                body=_rewrite(s.body) or [ast.Pass()],
+                                orelse=_rewrite(s.orelse),
                             )
                         )
+                    elif isinstance(s, _UNFOLDABLE):
+                        if any(isinstance(x, ast.Raise) for x in ast.walk(s)):
+                            raise RuntimeError(
+                                f"a raise sits under a {type(s).__name__} inside the loop; "
+                                "its reachability cannot be folded into a boolean"
+                            )
+                        out.append(
+                            s
+                        )  # no raise inside: plain computation, pass through
                     elif isinstance(s, ast.Return | ast.Continue | ast.Break):
-                        continue  # not meaningful inside the simulated check
+                        raise RuntimeError(  # noqa: TRY004 -- a refusal to grade, not a type error; main() maps it to exit 2
+                            f"{type(s).__name__} inside the validation loop; a skip is not "
+                            "a reject and this oracle will not guess which it is"
+                        )
                     else:
                         out.append(s)
                 return out
 
-            body = _to_check_body(node.body)
+            body = _rewrite(node.body)
             if guards == 0:
                 continue  # this loop rejects nothing -- not the validation loop
             body.append(ast.Return(value=ast.Constant(value=True)))
