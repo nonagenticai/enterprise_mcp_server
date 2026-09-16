@@ -11,6 +11,7 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlparse
 
 from uuid_v7.base import uuid7
 
@@ -292,12 +293,17 @@ async def register_client(
 ):
     """Register a new OAuth client."""
     # Validate redirect URIs
+    _loopback_hosts = {"localhost", "127.0.0.1", "::1"}
     for uri in client_data.redirect_uris:
-        if not uri.startswith(("https://", "http://localhost")):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Redirect URIs must use HTTPS except for localhost",
-            )
+        _parsed = urlparse(uri)
+        if _parsed.scheme == "https":
+            continue
+        if _parsed.scheme == "http" and (_parsed.hostname or "") in _loopback_hosts:
+            continue
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Redirect URIs must use HTTPS except for localhost",
+        )
 
     # Generate client ID and secret
     client_id = str(uuid7())
