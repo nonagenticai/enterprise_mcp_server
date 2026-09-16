@@ -86,6 +86,11 @@ _UNFOLDABLE = (
     ast.Match,
 )
 
+# Builtin constructors an oracle may evaluate over call-free arguments (see _call_free).
+# Module-level for the same reason as _UNFOLDABLE: a constant inside the extractor loop
+# is a late-bound closure capture (ruff B023).
+_PURE_CTORS = frozenset({"frozenset", "set", "tuple", "list", "dict"})
+
 SRC = Path(__file__).resolve().parent.parent / "src" / "api.py"
 TARGET_FUNC = "register_client"
 LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
@@ -212,10 +217,24 @@ def _extract_acceptance(tree: ast.AST) -> callable | None:
         # CALL-FREE assignments are pre-evaluated: literals, sets, tuples, constants. A DB call
         # or any other side effect in the prefix must never run inside an oracle.
         def _call_free(n: ast.AST) -> bool:
-            return not any(
-                isinstance(x, ast.Call | ast.Await | ast.Yield | ast.YieldFrom)
-                for x in ast.walk(n)
-            )
+            """True if evaluating `n` runs no user code.
+
+            A bare builtin constructor over call-free arguments (`frozenset({...})`,
+            `tuple([...])`) is allowed: the conveyor's first real fix used a set literal,
+            and the review of that fix showed the frozenset spelling of the SAME idea
+            was refused with exit 2. `re.compile(...)` and any attribute/method call
+            stay excluded -- they reach module state, which is more surface than an
+            oracle should execute.
+            """
+            for x in ast.walk(n):
+                if isinstance(x, ast.Await | ast.Yield | ast.YieldFrom):
+                    return False
+                if isinstance(x, ast.Call):
+                    if not (isinstance(x.func, ast.Name) and x.func.id in _PURE_CTORS):
+                        return False
+                    if x.keywords:
+                        return False
+            return True
 
         for node in ast.walk(func):
             if not isinstance(node, ast.For):
