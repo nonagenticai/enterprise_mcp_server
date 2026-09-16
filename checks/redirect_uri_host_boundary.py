@@ -86,6 +86,11 @@ _UNFOLDABLE = (
     ast.Match,
 )
 
+# Builtin constructors an oracle may evaluate over call-free arguments (see _call_free).
+# Module-level for the same reason as _UNFOLDABLE: a constant inside the extractor loop
+# is a late-bound closure capture (ruff B023).
+_PURE_CTORS = frozenset({"frozenset", "set", "tuple", "list", "dict"})
+
 SRC = Path(__file__).resolve().parent.parent / "src" / "api.py"
 TARGET_FUNC = "register_client"
 LOOPBACK = {"localhost", "127.0.0.1", "::1", "[::1]"}
@@ -204,9 +209,46 @@ def _extract_acceptance(tree: ast.AST) -> callable | None:
             continue
         if func.name != TARGET_FUNC:
             continue
+
+        # Locals the loop body may READ that were bound earlier in the function -- e.g. the
+        # conveyor's first real fix (ems PR #159) did `_loopback_hosts = {...}` before the loop.
+        # Inside the simulated __check those are free variables, and an earlier version tried
+        # to IMPORT them as modules (ModuleNotFoundError -> exit 2 on a correct fix). Only
+        # CALL-FREE assignments are pre-evaluated: literals, sets, tuples, constants. A DB call
+        # or any other side effect in the prefix must never run inside an oracle.
+        def _call_free(n: ast.AST) -> bool:
+            """True if evaluating `n` runs no user code.
+
+            A bare builtin constructor over call-free arguments (`frozenset({...})`,
+            `tuple([...])`) is allowed: the conveyor's first real fix used a set literal,
+            and the review of that fix showed the frozenset spelling of the SAME idea
+            was refused with exit 2. `re.compile(...)` and any attribute/method call
+            stay excluded -- they reach module state, which is more surface than an
+            oracle should execute.
+            """
+            for x in ast.walk(n):
+                if isinstance(x, ast.Await | ast.Yield | ast.YieldFrom):
+                    return False
+                if isinstance(x, ast.Call):
+                    if not (isinstance(x.func, ast.Name) and x.func.id in _PURE_CTORS):
+                        return False
+                    if x.keywords:
+                        return False
+            return True
+
         for node in ast.walk(func):
             if not isinstance(node, ast.For):
                 continue
+            pre_loop: list[ast.stmt] = []
+            for st in func.body:
+                if st is node:
+                    break
+                if (
+                    isinstance(st, ast.Assign | ast.AnnAssign)
+                    and st.value is not None
+                    and _call_free(st.value)
+                ):
+                    pre_loop.append(st)
             if "redirect_uri" not in ast.unparse(node.iter):
                 continue
             var = node.target.id if isinstance(node.target, ast.Name) else None
@@ -264,10 +306,17 @@ def _extract_acceptance(tree: ast.AST) -> callable | None:
                         out.append(
                             s
                         )  # no raise inside: plain computation, pass through
-                    elif isinstance(s, ast.Return | ast.Continue | ast.Break):
+                    elif isinstance(s, ast.Continue):
+                        # `continue` in a validate-or-raise loop means "this URI passed,
+                        # move to the next one" -- it IS the accept path. The conveyor's first
+                        # real fix (ems PR #159) used exactly this idiom and an earlier version
+                        # refused it with exit 2 ("a skip is not a reject") -- a correct fix
+                        # graded as unmeasurable. In a per-item validation loop, skip == accept.
+                        out.append(ast.Return(value=ast.Constant(value=True)))
+                    elif isinstance(s, ast.Return | ast.Break):
                         raise RuntimeError(  # noqa: TRY004 -- a refusal to grade, not a type error; main() maps it to exit 2
-                            f"{type(s).__name__} inside the validation loop; a skip is not "
-                            "a reject and this oracle will not guess which it is"
+                            f"{type(s).__name__} inside the validation loop; this oracle "
+                            "cannot fold its effect into a per-URI verdict and will not guess"
                         )
                     else:
                         out.append(s)
@@ -293,6 +342,7 @@ def _extract_acceptance(tree: ast.AST) -> callable | None:
             )
             module = ast.Module(
                 body=[
+                    *pre_loop,
                     check_fn,
                     ast.Assign(
                         targets=[ast.Name(id="__verdict", ctx=ast.Store())],
@@ -329,7 +379,14 @@ def _extract_acceptance(tree: ast.AST) -> callable | None:
                             missing = getattr(exc, "name", None)
                             if not missing:
                                 raise
-                            ns[missing] = importlib.import_module(missing)
+                            try:
+                                ns[missing] = importlib.import_module(missing)
+                            except ModuleNotFoundError:
+                                raise RuntimeError(
+                                    f"free variable {missing!r} in the validation loop is not a "
+                                    "module and was not bound by a call-free assignment before "
+                                    "the loop; this oracle cannot supply it"
+                                ) from None
                     else:  # pragma: no cover
                         raise RuntimeError(
                             "too many unresolved names in the acceptance expression"
