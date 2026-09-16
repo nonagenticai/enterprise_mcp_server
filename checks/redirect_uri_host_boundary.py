@@ -104,11 +104,32 @@ def generate_hostile_uris() -> list[tuple[str, str]]:
     """
     out: list[tuple[str, str]] = []
     for shape, why in (
+        # --- host-position gluing: the literal bytes 'localhost' inside a larger host ---
         ("http://localhost{lab}.example/cb", "suffix glued to localhost"),
         ("http://localhost.{lab}.com/cb", "localhost as a leading label"),
         ("http://{lab}localhost/cb", "prefix glued to localhost"),
         ("http://localhost{lab}/cb", "no dot, glued directly"),
         ("http://{lab}.localhost.{lab2}.net/cb", "localhost buried mid-name"),
+        # --- ⛔ USERINFO: 'localhost' is NOT the host at all, it is the credential. ---
+        # `http://localhost:@attacker.example/cb` parses to hostname=attacker.example, yet the
+        # string still STARTS WITH 'http://localhost:'. An adversarial review passed the whole
+        # oracle with `startswith("http://localhost/") or startswith("http://localhost:")` --
+        # a smarter prefix rule that is still a prefix rule -- because every case above puts
+        # 'localhost' in host position. These put it in userinfo, where only a real URL parse
+        # can tell the difference. This is the classic embedded-credentials redirect bypass.
+        (
+            "http://localhost:@{lab}.example/cb",
+            "userinfo: 'localhost:' as empty-password user",
+        ),
+        (
+            "http://localhost:{lab2}@{lab}.example/cb",
+            "userinfo: 'localhost' as user with a password",
+        ),
+        ("http://localhost@{lab}.example/cb", "userinfo: bare 'localhost@'"),
+        (
+            "http://localhost:8080@{lab}.example/cb",
+            "userinfo: mimics a port before the real host",
+        ),
     ):
         uri = shape.format(lab=_safe_label(), lab2=_safe_label())
         if _should_accept(uri):  # pragma: no cover - fairness guard
@@ -251,8 +272,10 @@ def main() -> int:
         print("This check measured nothing; do not read it as a pass.")
         return EXIT_NO_MEASUREMENT
 
-    if len(hostile) < 5:
-        print(f"HARNESS: generated only {len(hostile)} hostile cases, expected 5.")
+    if len(hostile) != 9:
+        print(
+            f"HARNESS: generated {len(hostile)} hostile cases, expected exactly 9 (5 host-position + 4 userinfo)."
+        )
         print("This check measured nothing; do not read it as a pass.")
         return EXIT_NO_MEASUREMENT
 
@@ -298,8 +321,13 @@ def main() -> int:
     if wrongly_accepted or wrongly_rejected:
         return EXIT_DEFECT
 
+    # ⚠️ Deliberately does NOT claim "decided by the parsed host". An earlier version printed
+    # that on evidence which did not establish it: a smarter prefix rule passed every case.
+    # This oracle can only certify what it measured -- rejection of these generated shapes --
+    # so that is all it says.
     print(
-        "\nAll cases correct: acceptance is decided by the parsed host, not a prefix."
+        "\nAll generated hostile shapes rejected and all legitimate URIs accepted "
+        "(host-position gluing AND userinfo placement)."
     )
     return EXIT_FIXED
 
