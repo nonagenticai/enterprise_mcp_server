@@ -94,9 +94,14 @@ class KeycloakAuthMiddleware(BaseHTTPMiddleware):
         if clean_path in self.excluded_paths:
             return True
 
-        # Check path prefixes
+        # Check path prefixes on a segment boundary: the path must equal the prefix
+        # or continue with a '/' separator. A raw startswith would let /docsabc, /static-x,
+        # /redocxyz, /openapi.json.bak bypass authentication.
         excluded_prefixes = ["/docs", "/redoc", "/static", "/openapi.json"]
-        return any(clean_path.startswith(prefix) for prefix in excluded_prefixes)
+        return any(
+            clean_path == prefix or clean_path.startswith(prefix + "/")
+            for prefix in excluded_prefixes
+        )
 
     def _extract_token(self, request: Request) -> str | None:
         """Extract JWT token from Authorization header."""
