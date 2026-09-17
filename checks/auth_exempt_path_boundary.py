@@ -150,12 +150,39 @@ def generate_hostile_paths(public: list[str]) -> list[tuple[str, str]]:
             ("{stem}.{lab}", "dotted sibling (a regex \\b DOES fire here)"),
         ):
             out.append((shape.format(stem=stem, lab=_safe_label()), f"{why}: {stem}"))
+    # Case-scrambled siblings of the EXEMPT_PREFIXES. The middleware normalises only
+    # via `path.rstrip("/")` (~L89 of middleware.py) -- no case-folding -- and Starlette
+    # routes are case-sensitive, so `/DOCS` and `/Static/x` are authenticated on main.
+    # A `.lower()`-before-compare "fix" newly exempts them; catch that here.
+    for stem in EXEMPT_PREFIXES:
+        upper_exact = stem.upper()
+        title_sub = "/" + stem[1].upper() + stem[2:] + "/" + _safe_label()
+        out.append(
+            (upper_exact, f"case-scrambled exact (reference is case-sensitive): {stem}")
+        )
+        out.append(
+            (
+                title_sub,
+                f"case-scrambled sibling with a sub-path (reference is case-sensitive): {stem}",
+            )
+        )
     a, b = _safe_label(), _safe_label()
     out += [
         (f"/{a}", "arbitrary top-level route: `/` is exact-only, never a prefix"),
         (f"/{a}/{b}", "arbitrary nested route"),
         (f"/{a}/docs", "exempt name in a NON-leading segment"),
         (f"/{a}/static/{b}.css", "exempt name in a NON-leading segment with sub-path"),
+        # An arbitrary `..` segment unrelated to any exempt prefix must not become
+        # exempt merely because it contains "..". (A `..` glued directly ONTO an
+        # exempt prefix, e.g. "/docs/../admin", is NOT tested here: the reference
+        # rule itself is a literal string-prefix test with no dot-segment
+        # normalisation, so it -- correctly, by spec -- also treats that path as
+        # exempt. That is not a blind spot to catch, it is the documented
+        # behaviour of the segment-boundary rule.)
+        (
+            f"/{a}/../{b}",
+            "'..' segment unrelated to any exempt prefix, not merely by containing '..'",
+        ),
     ]
     return out
 
@@ -240,22 +267,55 @@ def _extract_predicate(tree: ast.Module):
     ns: dict[str, object] = {"__name__": "<oracle>"}
 
     # 1. PUBLIC_ENDPOINTS as data -- the reference rule needs the LIST, not the code.
+    #    Accepts a plain `Assign` (list/tuple literal) or an annotated `AnnAssign`
+    #    (`PUBLIC_ENDPOINTS: list[str] = [...]`) -- both are the same declaration, only
+    #    one carries a type annotation. A value that is not a `literal_eval`-able literal
+    #    (e.g. `frozenset({...})`) is still accepted via the same pure-ctor route
+    #    `_evaluable`/`_PURE_CTORS` already permits for the rest of the extractor.
     public: list[str] | None = None
     for st in tree.body:
-        if isinstance(st, ast.Assign) and any(
-            isinstance(t, ast.Name) and t.id == PUBLIC_LIST_NAME for t in st.targets
+        if (
+            isinstance(st, ast.Assign)
+            and any(
+                isinstance(t, ast.Name) and t.id == PUBLIC_LIST_NAME for t in st.targets
+            )
+        ) or (
+            isinstance(st, ast.AnnAssign)
+            and isinstance(st.target, ast.Name)
+            and st.target.id == PUBLIC_LIST_NAME
+            and st.value is not None
         ):
-            try:
-                value = ast.literal_eval(st.value)
-            except ValueError as exc:
+            value_node = st.value
+        else:
+            continue
+        try:
+            value = ast.literal_eval(value_node)
+        except ValueError as exc:
+            if not _evaluable(value_node):
                 raise RuntimeError(
                     f"{PUBLIC_LIST_NAME} is not a literal: {exc}"
                 ) from None
-            if not isinstance(value, list | tuple | set | frozenset) or not all(
-                isinstance(v, str) for v in value
-            ):
-                raise RuntimeError(f"{PUBLIC_LIST_NAME} is not a collection of str")
-            public = list(value)
+            eval_mod = ast.Module(
+                body=[
+                    ast.Assign(
+                        targets=[ast.Name(id="__value__", ctx=ast.Store())],
+                        value=value_node,
+                        lineno=1,
+                    )
+                ],
+                type_ignores=[],
+            )
+            ast.fix_missing_locations(eval_mod)
+            eval_ns: dict[str, object] = {"__name__": "<oracle>"}
+            _exec_resolving(
+                compile(eval_mod, filename="<public_endpoints>", mode="exec"), eval_ns
+            )
+            value = eval_ns["__value__"]
+        if not isinstance(value, list | tuple | set | frozenset) or not all(
+            isinstance(v, str) for v in value
+        ):
+            raise RuntimeError(f"{PUBLIC_LIST_NAME} is not a collection of str")
+        public = list(value)
     if public is None:
         raise RuntimeError(f"module-level {PUBLIC_LIST_NAME} not found")
 
@@ -339,9 +399,12 @@ def _extract_predicate(tree: ast.Module):
     ast.fix_missing_locations(module)
     _exec_resolving(compile(module, filename="<middleware>", mode="exec"), ns)
 
-    if (
-        ns.get(PUBLIC_LIST_NAME) != public
-    ):  # pragma: no cover - literal_eval vs exec agree
+    # Normalise both sides before comparing: step 1 always returns a `list`, but the
+    # module re-exec in step 2 preserves whatever container the source used (tuple,
+    # frozenset, set). A tuple/frozenset/set spelling of the same values is NOT a
+    # disagreement between the two extraction routes -- only a genuine content
+    # mismatch is.
+    if set(ns.get(PUBLIC_LIST_NAME, ())) != set(public):
         raise RuntimeError(f"{PUBLIC_LIST_NAME} evaluated differently by two routes")
 
     # 4. Instantiate WITHOUT running __init__, then replay only its evaluable `self.X = ...`
@@ -429,7 +492,14 @@ def main() -> int:
     if not src.exists():
         return _no_measurement(f"{src} not found.")
     try:
-        tree = ast.parse(src.read_text(encoding="utf-8"))
+        text = src.read_text(encoding="utf-8")
+    except OSError as exc:
+        # e.g. ORACLE_SRC_OVERRIDE pointing at a directory (IsADirectoryError).
+        return _no_measurement(f"could not read {src}: {exc}")
+    except UnicodeDecodeError as exc:
+        return _no_measurement(f"could not decode {src} as UTF-8: {exc}")
+    try:
+        tree = ast.parse(text)
     except SyntaxError as exc:
         return _no_measurement(f"could not parse {src}: {exc}")
 
@@ -452,7 +522,11 @@ def main() -> int:
             f"reference rule failed its own fairness check: hostile-but-exempt={unfair_h} "
             f"legitimate-but-authenticated={unfair_l}"
         )
-    expected_hostile = 4 * len({*EXEMPT_PREFIXES, *(p for p in public if p != "/")}) + 4
+    expected_hostile = (
+        4 * len({*EXEMPT_PREFIXES, *(p for p in public if p != "/")})
+        + 2 * len(EXEMPT_PREFIXES)  # case-scrambled exact + case-scrambled sub-path
+        + 5  # 4 arbitrary-route shapes + 1 unrelated ".." shape
+    )
     if len(hostile) != expected_hostile:
         return _no_measurement(
             f"generated {len(hostile)} hostile cases, expected {expected_hostile}"
