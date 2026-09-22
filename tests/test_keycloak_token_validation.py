@@ -14,7 +14,12 @@ The four cases are chosen to fail if the migration went wrong in the four ways i
   2. an expired token still raises -- `options["verify_exp"]` is still honoured;
   3. a token signed by a DIFFERENT key raises -- signature verification is not skipped;
   4. an HS256 token signed with the PUBLIC key as its secret raises `InvalidAlgorithmError` --
-     the classic algorithm confusion attack, which `algorithms=["RS256"]` is what prevents.
+     the classic algorithm confusion attack, which `algorithms=["RS256"]` is what prevents;
+  5. a token whose `iat` is in the FUTURE is still ACCEPTED -- jose never verified `iat`, PyJWT
+     does by default, and that divergence would turn one second of Keycloak clock skew into a
+     total auth outage (see the comment on `verify_iat` in validator.py);
+  6. the PEM shape production actually builds -- a single-line base64 body, not the 64-column
+     wrapping a test would naturally produce -- is accepted.
 
 All four were verified by mutation, not by inspection: flipping `verify_signature` to False fails
 2 of them, `verify_exp` to False fails 1, and widening the allow-list to include HS256 fails case
@@ -145,3 +150,44 @@ def test_hs256_token_signed_with_the_public_key_is_rejected_by_the_allow_list():
 
     with pytest.raises(InvalidAlgorithmError):
         asyncio.run(_validator_for(public_pem).validate_token(token))
+
+
+def test_future_iat_is_accepted_because_keycloak_stamps_it_from_its_own_clock():
+    """The regression this file exists to prevent, and it is not a hypothetical.
+
+    `python-jose` did not verify `iat`; PyJWT verifies it by default and raises
+    `ImmatureSignatureError` for an `iat` in the future. Keycloak stamps `iat` from its own wall
+    clock, so at PyJWT's default ONE SECOND of skew between the Keycloak pod and this service 401s
+    every request from every user. This test pins the parity explicitly, because a future reader
+    tidying the options dict has no other way to learn that `verify_iat: False` is load-bearing.
+    """
+    private_pem, public_pem = _keypair()
+    now = datetime.now(UTC)
+    token = jwt.encode(
+        _claims(iat=now + timedelta(seconds=60), exp=now + timedelta(minutes=5)),
+        private_pem,
+        algorithm="RS256",
+    )
+
+    payload = asyncio.run(_validator_for(public_pem).validate_token(token))
+
+    assert payload["preferred_username"] == "contract-test-user"
+
+
+def test_the_single_line_pem_production_builds_is_accepted():
+    """Production does not use a 64-column PEM.
+
+    `KeycloakTokenValidator.get_public_key` concatenates Keycloak's `public_key()` -- one
+    unwrapped base64 line -- between the BEGIN/END markers. A test that only ever feeds a
+    conventionally wrapped PEM would not notice a library that rejected that shape.
+    """
+    private_pem, public_pem = _keypair()
+    body = "".join(
+        line for line in public_pem.splitlines() if not line.startswith("-----")
+    )
+    single_line_pem = f"-----BEGIN PUBLIC KEY-----\n{body}\n-----END PUBLIC KEY-----"
+    token = jwt.encode(_claims(), private_pem, algorithm="RS256")
+
+    payload = asyncio.run(_validator_for(single_line_pem).validate_token(token))
+
+    assert payload["sub"] == "00000000-0000-0000-0000-000000000001"

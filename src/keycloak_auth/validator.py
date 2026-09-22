@@ -72,6 +72,18 @@ class KeycloakTokenValidator:
                 "verify_signature": True,
                 "verify_aud": False,  # Keycloak doesn't always include aud
                 "verify_exp": True,
+                # ⚠️ NOT cosmetic, and NOT the same as the three above. python-jose
+                # (which this call used until 2026-09-22) did not verify `iat` at
+                # all; PyJWT verifies it BY DEFAULT and rejects any token whose
+                # `iat` is in the future. Keycloak stamps `iat` from its own wall
+                # clock, so with this left at PyJWT's default, ONE SECOND of clock
+                # skew between the Keycloak pod and this service raises
+                # ImmatureSignatureError and every request from every user 401s —
+                # a fail-closed total auth outage produced by ordinary NTP drift.
+                # Measured side by side on jose 3.5.0 vs PyJWT 2.14.0: iat +1s was
+                # ACCEPTED by jose and raised on PyJWT. False restores the
+                # behaviour this service has actually been running.
+                "verify_iat": False,
             }
 
             payload = jwt.decode(
