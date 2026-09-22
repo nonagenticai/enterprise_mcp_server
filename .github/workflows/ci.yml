@@ -78,6 +78,72 @@ jobs:
       # `-p no:cacheprovider` keeps a stale .pytest_cache out of a fresh runner's tree.
       - name: Run test suite
         run: uv run --no-sync python -m pytest -p no:cacheprovider
+      # WHY THIS EXISTS. README.md calls uv.lock "the authoritative -- and only -- dependency
+      # set" and the image installs it with `uv sync --frozen`, yet NO job in this workflow has
+      # ever asked whether anything in that set has a published CVE. SECURITY.md:64 scopes out
+      # only dependencies "not yet fixed upstream" and promises "we'll pick up patched releases
+      # promptly" -- a promise nothing measures. Filed against gitops-production#4050.
+      #
+      # ⛔ WHY A STEP AND NOT A FOURTH JOB -- DO NOT "TIDY" THIS INTO A JOB. The header of this
+      # job already says downstream automation gates on the number of checks this workflow
+      # reports. That consumer is now IDENTIFIED, not assumed: `AA_MERGE_REPO_ALLOWLIST` in the
+      # n8n ConfigMap carries `nonagenticai/enterprise_mcp_server:3`, parsed by
+      # `approval-callback.json :: Check Merge Base` into `expectedChecks` and handed to
+      # coding-github's `merge_pull_request`, which grades
+      #     `elif expected_checks is not None and total < expected_checks: verdict = "pending"`.
+      # It is a FLOOR (>= 3), so a fourth check would not block a merge -- but it would silently
+      # stop the floor being TIGHT: the intent recorded beside that value is "every check ems has
+      # must have completed and passed", and at :3 with 4 checks a PR could clear the floor with
+      # the fourth not yet created. The opposite direction is worse and has already happened:
+      # `:4` was set for a `probe-oracles` job that was then deleted in #147, `total < expected`
+      # became unsatisfiable, and the merge path refused every PR until it was corrected to :3.
+      # A step keeps the count at 3, so neither failure mode is reachable and no cross-repo
+      # ConfigMap change has to land in lockstep with this one.
+      #
+      # WHAT IT ASSERTS: every pinned runtime distribution in uv.lock, resolved exactly as the
+      # lock resolves it, is free of known vulnerabilities. `--locked` (not `--frozen`) for the
+      # same reason the install step above uses it -- a lock that disagrees with pyproject.toml
+      # must not be auditable, or the audit describes a resolution nobody committed.
+      # `--no-dev` scopes this to the set that actually ships; a ruff CVE is not a product
+      # exposure. It fails loudly if the export comes back EMPTY, exactly like `compile` below:
+      # an audit that reads zero packages cannot report a vulnerable one.
+      #
+      # `uvx`, NOT `uv pip install pip-audit` into the project venv. Installing the tool into the
+      # environment it is about to scan adds pip-audit's own dependency tree to the audited set,
+      # so a CVE in the SCANNER could red this repo for something it does not ship. uvx keeps the
+      # tool in its own environment and `-r` audits the lock and nothing else.
+      #
+      # The retry is for osv.dev / pypi.org flaking (ConnectionResetError, SSL handshake), not
+      # for CVEs: a real finding exits 1 on all three attempts and the step stays red. ⛔ The
+      # loop must not be written as `...; fi` then `rc=$?` -- that reads the `fi`, is always 0,
+      # and swallowed the real exit code fleet-wide for weeks in 2026-05.
+      - name: Audit uv.lock for known vulnerabilities
+        shell: bash
+        run: |
+          set -euo pipefail
+          REQ="$RUNNER_TEMP/requirements.audit.txt"
+          uv export --locked --no-dev --no-emit-project --format requirements-txt -o "$REQ"
+          n="$(grep -c '^[A-Za-z0-9]' "$REQ" || true)"
+          if [ "${n:-0}" -eq 0 ]; then
+            echo "FAIL: uv export produced 0 pinned distributions -- this audit is blind, not clean"
+            exit 1
+          fi
+          echo "Auditing $n pinned distributions from uv.lock"
+          rc=0
+          for attempt in 1 2 3; do
+            rc=0
+            # `|| rc=$?` and NOT an `if`: under `set -e` this captures the REAL exit code of
+            # pip-audit itself. See the warning above about `rc=$?` placed after a `fi`.
+            uvx pip-audit --requirement "$REQ" --disable-pip || rc=$?
+            if [ "$rc" -eq 0 ]; then
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "::warning::pip-audit attempt $attempt exited $rc -- retrying in $((attempt * 15))s"
+              sleep "$((attempt * 15))"
+            fi
+          done
+          exit "$rc"
 
   # WHY THIS JOB EXISTS. A tracked `.py` was once pushed with a trailing `}], ` -- a plain
   # SyntaxError -- and BOTH existing checks went green. Neither could see it: `smoke` never
