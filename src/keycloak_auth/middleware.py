@@ -4,7 +4,7 @@ import logging
 from collections.abc import Callable
 
 from fastapi import HTTPException, Request, Response, status
-from jose import JWTError
+from jwt import PyJWTError
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from .config import get_keycloak_settings
@@ -59,7 +59,7 @@ class KeycloakAuthMiddleware(BaseHTTPMiddleware):
             # Validate token with Keycloak
             try:
                 payload = await self.validator.validate_token(token)
-            except JWTError as e:
+            except PyJWTError as e:
                 logger.warning(f"Token validation failed: {e}")
                 return self._unauthorized_response(f"Invalid token: {e!s}")
             except Exception as e:

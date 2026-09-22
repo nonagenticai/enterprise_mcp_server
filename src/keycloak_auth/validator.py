@@ -4,7 +4,8 @@ import logging
 from functools import lru_cache
 
 import httpx
-from jose import JWTError, jwt
+import jwt
+from jwt import PyJWTError
 from keycloak import KeycloakOpenID
 
 from .config import get_keycloak_settings
@@ -63,7 +64,7 @@ class KeycloakTokenValidator:
             Decoded token payload with user info
 
         Raises:
-            JWTError: If token is invalid or expired
+            PyJWTError: If token is invalid or expired
         """
         try:
             # Decode and validate token
@@ -82,7 +83,7 @@ class KeycloakTokenValidator:
             )
             return payload
 
-        except JWTError as e:
+        except PyJWTError as e:
             logger.warning(f"Token validation failed: {e}")
             raise
 
