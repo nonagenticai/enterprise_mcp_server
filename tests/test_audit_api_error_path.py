@@ -11,11 +11,11 @@ request that omits the filter -- and every failure of `audit_service.get_logs()`
 instead of the 500 the code was written to return. The operator-facing `detail` was
 destroyed and the traceback named the wrong fault.
 
-`checks/http_status_binding.py` catches the binding statically. This file catches the
-BEHAVIOUR, which is a different claim: a static walker is satisfied by any name that
-resolves, including one that resolves to the wrong thing, and would be satisfied by a bare
-literal `500` that silently dropped the detail. The assertion here is that a failing
-service produces an HTTP 500 response carrying the detail -- not an unhandled exception.
+This file pins the BEHAVIOUR rather than the binding: a static check is satisfied by any
+name that resolves, including one that resolves to the wrong thing, and would be satisfied
+by a bare literal `500` that silently dropped the detail. The assertion here is that a
+failing service produces an HTTP 500 response carrying the detail -- not an unhandled
+exception.
 
 HOW TO CONFIRM IT CAN FAIL: revert the fix (re-point :145 at the shadowed `status`) and
 `test_failure_path_returns_a_clean_500` errors with the AttributeError above, because
