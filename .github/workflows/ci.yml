@@ -35,9 +35,8 @@ jobs:
     # REAL PostgreSQL: a mocked pool would be written against whichever driver API the
     # author believed in, and would have agreed with the bug.
     #
-    # This is a SERVICE on the existing job, deliberately NOT a fourth job: downstream
-    # automation gates on the number of checks this workflow reports, so adding a job
-    # would break it silently. Keep this workflow at three checks.
+    # This is a SERVICE on the existing job rather than a separate job, so the integration
+    # tests run against the same checkout and environment as the rest of the suite.
     services:
       postgres:
         image: postgres:18
@@ -82,23 +81,10 @@ jobs:
       # set" and the image installs it with `uv sync --frozen`, yet NO job in this workflow has
       # ever asked whether anything in that set has a published CVE. SECURITY.md:64 scopes out
       # only dependencies "not yet fixed upstream" and promises "we'll pick up patched releases
-      # promptly" -- a promise nothing measures. Filed against gitops-production#4050.
+      # promptly" -- a promise nothing measures.
       #
-      # ⛔ WHY A STEP AND NOT A FOURTH JOB -- DO NOT "TIDY" THIS INTO A JOB. The header of this
-      # job already says downstream automation gates on the number of checks this workflow
-      # reports. That consumer is now IDENTIFIED, not assumed: `AA_MERGE_REPO_ALLOWLIST` in the
-      # n8n ConfigMap carries `nonagenticai/enterprise_mcp_server:3`, parsed by
-      # `approval-callback.json :: Check Merge Base` into `expectedChecks` and handed to
-      # coding-github's `merge_pull_request`, which grades
-      #     `elif expected_checks is not None and total < expected_checks: verdict = "pending"`.
-      # It is a FLOOR (>= 3), so a fourth check would not block a merge -- but it would silently
-      # stop the floor being TIGHT: the intent recorded beside that value is "every check ems has
-      # must have completed and passed", and at :3 with 4 checks a PR could clear the floor with
-      # the fourth not yet created. The opposite direction is worse and has already happened:
-      # `:4` was set for a `probe-oracles` job that was then deleted in #147, `total < expected`
-      # became unsatisfiable, and the merge path refused every PR until it was corrected to :3.
-      # A step keeps the count at 3, so neither failure mode is reachable and no cross-repo
-      # ConfigMap change has to land in lockstep with this one.
+      # A step on this job rather than a separate job: it needs the same uv toolchain and
+      # lockfile the install step above already set up.
       #
       # WHAT IT ASSERTS: every pinned runtime distribution in uv.lock, resolved exactly as the
       # lock resolves it, is free of known vulnerabilities. `--locked` (not `--frozen`) for the
@@ -116,7 +102,7 @@ jobs:
       # The retry is for osv.dev / pypi.org flaking (ConnectionResetError, SSL handshake), not
       # for CVEs: a real finding exits 1 on all three attempts and the step stays red. ⛔ The
       # loop must not be written as `...; fi` then `rc=$?` -- that reads the `fi`, is always 0,
-      # and swallowed the real exit code fleet-wide for weeks in 2026-05.
+      # and would silently swallow pip-audit's real exit code.
       - name: Audit uv.lock for known vulnerabilities
         shell: bash
         run: |
@@ -203,22 +189,23 @@ jobs:
           print(f"PASS: all {len(files)} tracked Python file(s) parse under Python {sys.version.split()[0]}")
           PY
 
-      # WHY THESE TWO STEPS ARE HERE AND NOT ANYWHERE ELSE. Both are stdlib-only AST
-      # walkers over `src/`: no install, no dependency graph, nothing but the interpreter
-      # this job already pins -- which is precisely this job's charter ("the only thing
-      # that reads the rest" of the tree).
-      #
-      # They are deliberately NOT pytest tests, so `testpaths` cannot reach them:
-      # `checks/__init__.py` says so, they define no `test_*` function and their filenames
-      # match neither `test_*.py` nor `*_test.py`. Measured: `pytest checks/ --collect-only`
-      # exits 5 with 0 items. Adding `checks` to `testpaths` would LOOK like wiring and gate
-      # nothing at all. A fourth job is also ruled out -- see "Keep this workflow at three
-      # checks" on the `tests` job above -- so they run as ordinary steps of this one.
-      #
-      # Each is a BARE single command. No `|| true`, no `|| echo`, no pipe, no `if`
-      # condition: `main()` returns the verdict as an exit code and that exit code must be
-      # the step's, or the gate prints its own failure into a green check.
-      - name: Oracle -- every audit log_event call passes every required argument
-        run: python3 -m checks.audit_call_arity
-      - name: Oracle -- every HTTP_* constant resolves to an imported status module
-        run: python3 -m checks.http_status_binding
+      # Keep test harnesses and scratch material out of this public repository. Regression
+      # coverage belongs in `tests/` as ordinary pytest tests; a top-level `checks/` directory,
+      # a top-level `fixture(s)/` directory, or any tracked path with a component named
+      # `aa_*` or containing `probe` / `oracle` fails the build.
+      - name: Keep harness and scratch paths out of the tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          files="$(git ls-files)"
+          if [ -z "$files" ]; then
+            echo "FAIL: git ls-files returned 0 paths -- this guard is blind, not clean"
+            exit 1
+          fi
+          bad="$(printf '%s\n' "$files" | grep -iE '^(checks|fixtures?)/|(^|/)(aa_[^/]*|[^/]*(probe|oracle)[^/]*)(/|$)' || true)"
+          if [ -n "$bad" ]; then
+            echo "FAIL: harness/scratch paths are not allowed in this repository:"
+            printf '%s\n' "$bad"
+            exit 1
+          fi
+          echo "PASS: $(printf '%s\n' "$files" | wc -l | tr -d ' ') tracked paths, none match the keep-out pattern"
