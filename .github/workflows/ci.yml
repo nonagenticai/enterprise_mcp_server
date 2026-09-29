@@ -191,8 +191,9 @@ jobs:
 
       # Keep test harnesses and scratch material out of this public repository. Regression
       # coverage belongs in `tests/` as ordinary pytest tests; a top-level `checks/` directory,
-      # a top-level `fixture(s)/` directory, or any tracked path with a component named
-      # `aa_*` or containing `probe` / `oracle` fails the build.
+      # a top-level `fixture(s)/` directory, any path component named `aa_*`, or a directory
+      # named `probe(s)/` or `oracle(s)/` fails the build. File names such as
+      # `health_probe.py` are deliberately allowed.
       - name: Keep harness and scratch paths out of the tree
         shell: bash
         run: |
@@ -202,7 +203,7 @@ jobs:
             echo "FAIL: git ls-files returned 0 paths -- this guard is blind, not clean"
             exit 1
           fi
-          bad="$(printf '%s\n' "$files" | grep -iE '^(checks|fixtures?)/|(^|/)(aa_[^/]*|[^/]*(probe|oracle)[^/]*)(/|$)' || true)"
+          bad="$(printf '%s\n' "$files" | grep -iE '^(checks|fixtures?)/|(^|/)aa_[^/]*(/|$)|(^|/)(probes?|oracles?)/' || true)"
           if [ -n "$bad" ]; then
             echo "FAIL: harness/scratch paths are not allowed in this repository:"
             printf '%s\n' "$bad"
